@@ -1,0 +1,460 @@
+"""AltSignal configuration.
+
+This is the ONLY file you need to edit to switch the pilot state.
+
+    STATE = "California"      ->   STATE = "Texas"
+
+Every module reads the active state from here (through ``get_state_info``),
+so changing the single ``STATE`` value and re-running the pipelines is enough
+to collect data for a different state.
+
+The file has four parts:
+    1. The active state (``STATE``).
+    2. A lookup table of all 50 states + DC (abbreviation, FIPS code, metros).
+    3. Small helper functions/classes to read that table.
+    4. Settings for each data source (paths, URLs, thresholds).
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# 1. THE ACTIVE STATE
+# ---------------------------------------------------------------------------
+# Full state name (e.g. "California") or two-letter abbreviation (e.g. "CA").
+STATE = "California"
+
+# ---------------------------------------------------------------------------
+# 2. STATE LOOKUP TABLE
+# ---------------------------------------------------------------------------
+# Format:  "State name": ("ABBR", "FIPS", [metros])
+# Each metro is:  ("Metro name", ["County", "County", ...])
+#
+#   * Metro name  -> used as the geo_name in the database and, together with
+#                    the state abbreviation, as the Indeed search location
+#                    (e.g. "Los Angeles, CA").
+#   * Counties    -> the principal counties of the metro (names exactly as in
+#                    the Census TIGER file). VIIRS nighttime lights are
+#                    averaged over these counties.
+#
+# The metro lists are deliberately short: the largest 2-4 metro areas per
+# state, built from the principal counties of each Census metropolitan
+# statistical area. They are an approximation, not the official MSA
+# definition. Add or edit entries freely; nothing else needs to change.
+_STATE_TABLE: dict[str, tuple[str, str, list[tuple[str, list[str]]]]] = {
+    "Alabama": ("AL", "01", [
+        ("Birmingham", ["Jefferson", "Shelby"]),
+        ("Huntsville", ["Madison", "Limestone"]),
+        ("Mobile", ["Mobile"]),
+        ("Montgomery", ["Montgomery"]),
+    ]),
+    "Alaska": ("AK", "02", [
+        ("Anchorage", ["Anchorage"]),
+        ("Fairbanks", ["Fairbanks North Star"]),
+    ]),
+    "Arizona": ("AZ", "04", [
+        ("Phoenix", ["Maricopa", "Pinal"]),
+        ("Tucson", ["Pima"]),
+    ]),
+    "Arkansas": ("AR", "05", [
+        ("Little Rock", ["Pulaski", "Saline"]),
+        ("Fayetteville", ["Washington", "Benton"]),
+    ]),
+    "California": ("CA", "06", [
+        ("Los Angeles", ["Los Angeles", "Orange"]),
+        ("San Francisco", ["San Francisco", "Alameda", "Contra Costa", "San Mateo", "Marin"]),
+        ("San Diego", ["San Diego"]),
+        ("San Jose", ["Santa Clara", "San Benito"]),
+        ("Sacramento", ["Sacramento", "Placer", "El Dorado", "Yolo"]),
+        ("Riverside", ["Riverside", "San Bernardino"]),
+        ("Fresno", ["Fresno"]),
+    ]),
+    "Colorado": ("CO", "08", [
+        ("Denver", ["Denver", "Adams", "Arapahoe", "Jefferson", "Douglas"]),
+        ("Colorado Springs", ["El Paso"]),
+        ("Fort Collins", ["Larimer"]),
+    ]),
+    "Connecticut": ("CT", "09", [
+        ("Hartford", ["Hartford", "Tolland", "Middlesex"]),
+        ("New Haven", ["New Haven"]),
+        ("Bridgeport", ["Fairfield"]),
+    ]),
+    "Delaware": ("DE", "10", [
+        ("Wilmington", ["New Castle"]),
+        ("Dover", ["Kent"]),
+    ]),
+    "District of Columbia": ("DC", "11", [
+        ("Washington", ["District of Columbia"]),
+    ]),
+    "Florida": ("FL", "12", [
+        ("Miami", ["Miami-Dade", "Broward", "Palm Beach"]),
+        ("Tampa", ["Hillsborough", "Pinellas", "Pasco", "Hernando"]),
+        ("Orlando", ["Orange", "Seminole", "Osceola", "Lake"]),
+        ("Jacksonville", ["Duval", "Clay", "St. Johns", "Nassau", "Baker"]),
+    ]),
+    "Georgia": ("GA", "13", [
+        ("Atlanta", ["Fulton", "DeKalb", "Cobb", "Gwinnett", "Clayton", "Cherokee", "Forsyth", "Henry"]),
+        ("Savannah", ["Chatham"]),
+        ("Augusta", ["Richmond", "Columbia"]),
+    ]),
+    "Hawaii": ("HI", "15", [
+        ("Honolulu", ["Honolulu"]),
+        ("Kahului", ["Maui"]),
+    ]),
+    "Idaho": ("ID", "16", [
+        ("Boise", ["Ada", "Canyon"]),
+        ("Coeur d'Alene", ["Kootenai"]),
+    ]),
+    "Illinois": ("IL", "17", [
+        ("Chicago", ["Cook", "DuPage", "Lake", "Will", "Kane", "McHenry"]),
+        ("Rockford", ["Winnebago"]),
+        ("Peoria", ["Peoria", "Tazewell"]),
+    ]),
+    "Indiana": ("IN", "18", [
+        ("Indianapolis", ["Marion", "Hamilton", "Hendricks", "Johnson", "Hancock"]),
+        ("Fort Wayne", ["Allen"]),
+        ("Evansville", ["Vanderburgh"]),
+    ]),
+    "Iowa": ("IA", "19", [
+        ("Des Moines", ["Polk", "Dallas", "Warren"]),
+        ("Cedar Rapids", ["Linn"]),
+        ("Davenport", ["Scott"]),
+    ]),
+    "Kansas": ("KS", "20", [
+        ("Wichita", ["Sedgwick"]),
+        ("Topeka", ["Shawnee"]),
+    ]),
+    "Kentucky": ("KY", "21", [
+        ("Louisville", ["Jefferson", "Bullitt", "Oldham"]),
+        ("Lexington", ["Fayette", "Jessamine"]),
+    ]),
+    "Louisiana": ("LA", "22", [
+        ("New Orleans", ["Orleans", "Jefferson", "St. Tammany", "St. Bernard"]),
+        ("Baton Rouge", ["East Baton Rouge", "Livingston"]),
+        ("Shreveport", ["Caddo", "Bossier"]),
+    ]),
+    "Maine": ("ME", "23", [
+        ("Portland", ["Cumberland", "York", "Sagadahoc"]),
+        ("Bangor", ["Penobscot"]),
+    ]),
+    "Maryland": ("MD", "24", [
+        ("Baltimore", ["Baltimore", "Anne Arundel", "Howard", "Harford"]),
+        ("Rockville", ["Montgomery", "Prince George's"]),
+        ("Frederick", ["Frederick"]),
+    ]),
+    "Massachusetts": ("MA", "25", [
+        ("Boston", ["Suffolk", "Middlesex", "Norfolk", "Essex", "Plymouth"]),
+        ("Worcester", ["Worcester"]),
+        ("Springfield", ["Hampden"]),
+    ]),
+    "Michigan": ("MI", "26", [
+        ("Detroit", ["Wayne", "Oakland", "Macomb"]),
+        ("Grand Rapids", ["Kent", "Ottawa"]),
+        ("Lansing", ["Ingham"]),
+    ]),
+    "Minnesota": ("MN", "27", [
+        ("Minneapolis", ["Hennepin", "Ramsey", "Dakota", "Anoka", "Washington", "Scott", "Carver"]),
+        ("Rochester", ["Olmsted"]),
+        ("Duluth", ["St. Louis"]),
+    ]),
+    "Mississippi": ("MS", "28", [
+        ("Jackson", ["Hinds", "Rankin", "Madison"]),
+        ("Gulfport", ["Harrison"]),
+    ]),
+    "Missouri": ("MO", "29", [
+        ("Kansas City", ["Jackson", "Clay", "Platte", "Cass"]),
+        ("St. Louis", ["St. Louis", "St. Charles", "Jefferson"]),
+        ("Springfield", ["Greene"]),
+    ]),
+    "Montana": ("MT", "30", [
+        ("Billings", ["Yellowstone"]),
+        ("Missoula", ["Missoula"]),
+    ]),
+    "Nebraska": ("NE", "31", [
+        ("Omaha", ["Douglas", "Sarpy"]),
+        ("Lincoln", ["Lancaster"]),
+    ]),
+    "Nevada": ("NV", "32", [
+        ("Las Vegas", ["Clark"]),
+        ("Reno", ["Washoe"]),
+    ]),
+    "New Hampshire": ("NH", "33", [
+        ("Manchester", ["Hillsborough"]),
+        ("Portsmouth", ["Rockingham"]),
+    ]),
+    "New Jersey": ("NJ", "34", [
+        ("Newark", ["Essex", "Union", "Morris", "Passaic"]),
+        ("Jersey City", ["Hudson", "Bergen"]),
+        ("Trenton", ["Mercer"]),
+        ("Camden", ["Camden", "Burlington"]),
+    ]),
+    "New Mexico": ("NM", "35", [
+        ("Albuquerque", ["Bernalillo", "Sandoval"]),
+        ("Santa Fe", ["Santa Fe"]),
+    ]),
+    "New York": ("NY", "36", [
+        ("New York", ["New York", "Kings", "Queens", "Bronx", "Richmond"]),
+        ("Long Island", ["Nassau", "Suffolk"]),
+        ("Buffalo", ["Erie", "Niagara"]),
+        ("Rochester", ["Monroe"]),
+        ("Albany", ["Albany", "Rensselaer", "Saratoga", "Schenectady"]),
+    ]),
+    "North Carolina": ("NC", "37", [
+        ("Charlotte", ["Mecklenburg", "Union", "Cabarrus", "Gaston"]),
+        ("Raleigh", ["Wake", "Johnston"]),
+        ("Greensboro", ["Guilford"]),
+        ("Durham", ["Durham", "Orange"]),
+    ]),
+    "North Dakota": ("ND", "38", [
+        ("Fargo", ["Cass"]),
+        ("Bismarck", ["Burleigh", "Morton"]),
+    ]),
+    "Ohio": ("OH", "39", [
+        ("Columbus", ["Franklin", "Delaware", "Licking"]),
+        ("Cleveland", ["Cuyahoga", "Lake", "Lorain", "Geauga", "Medina"]),
+        ("Cincinnati", ["Hamilton", "Butler", "Warren", "Clermont"]),
+    ]),
+    "Oklahoma": ("OK", "40", [
+        ("Oklahoma City", ["Oklahoma", "Cleveland", "Canadian"]),
+        ("Tulsa", ["Tulsa", "Rogers", "Wagoner"]),
+    ]),
+    "Oregon": ("OR", "41", [
+        ("Portland", ["Multnomah", "Washington", "Clackamas"]),
+        ("Eugene", ["Lane"]),
+        ("Salem", ["Marion", "Polk"]),
+    ]),
+    "Pennsylvania": ("PA", "42", [
+        ("Philadelphia", ["Philadelphia", "Montgomery", "Bucks", "Delaware", "Chester"]),
+        ("Pittsburgh", ["Allegheny", "Washington", "Westmoreland", "Butler", "Beaver"]),
+        ("Harrisburg", ["Dauphin", "Cumberland", "Perry"]),
+    ]),
+    "Rhode Island": ("RI", "44", [
+        ("Providence", ["Providence", "Kent", "Bristol", "Washington", "Newport"]),
+    ]),
+    "South Carolina": ("SC", "45", [
+        ("Charleston", ["Charleston", "Berkeley", "Dorchester"]),
+        ("Columbia", ["Richland", "Lexington"]),
+        ("Greenville", ["Greenville", "Pickens"]),
+    ]),
+    "South Dakota": ("SD", "46", [
+        ("Sioux Falls", ["Minnehaha", "Lincoln"]),
+        ("Rapid City", ["Pennington"]),
+    ]),
+    "Tennessee": ("TN", "47", [
+        ("Nashville", ["Davidson", "Williamson", "Rutherford", "Wilson"]),
+        ("Memphis", ["Shelby"]),
+        ("Knoxville", ["Knox"]),
+        ("Chattanooga", ["Hamilton"]),
+    ]),
+    "Texas": ("TX", "48", [
+        ("Houston", ["Harris", "Fort Bend", "Montgomery", "Brazoria", "Galveston"]),
+        ("Dallas", ["Dallas", "Tarrant", "Collin", "Denton"]),
+        ("Austin", ["Travis", "Williamson", "Hays"]),
+        ("San Antonio", ["Bexar", "Comal"]),
+        ("El Paso", ["El Paso"]),
+    ]),
+    "Utah": ("UT", "49", [
+        ("Salt Lake City", ["Salt Lake", "Tooele"]),
+        ("Provo", ["Utah"]),
+        ("Ogden", ["Weber", "Davis"]),
+    ]),
+    "Vermont": ("VT", "50", [
+        ("Burlington", ["Chittenden", "Franklin"]),
+    ]),
+    "Virginia": ("VA", "51", [
+        ("Virginia Beach", ["Virginia Beach", "Norfolk", "Chesapeake", "Newport News", "Hampton"]),
+        ("Richmond", ["Richmond", "Henrico", "Chesterfield", "Hanover"]),
+        ("Arlington", ["Fairfax", "Arlington", "Loudoun", "Prince William", "Alexandria"]),
+    ]),
+    "Washington": ("WA", "53", [
+        ("Seattle", ["King", "Snohomish", "Pierce"]),
+        ("Spokane", ["Spokane"]),
+    ]),
+    "West Virginia": ("WV", "54", [
+        ("Charleston", ["Kanawha"]),
+        ("Huntington", ["Cabell"]),
+        ("Morgantown", ["Monongalia"]),
+    ]),
+    "Wisconsin": ("WI", "55", [
+        ("Milwaukee", ["Milwaukee", "Waukesha", "Washington", "Ozaukee"]),
+        ("Madison", ["Dane"]),
+        ("Green Bay", ["Brown"]),
+    ]),
+    "Wyoming": ("WY", "56", [
+        ("Cheyenne", ["Laramie"]),
+        ("Casper", ["Natrona"]),
+    ]),
+}
+
+
+# ---------------------------------------------------------------------------
+# 3. HELPERS TO READ THE LOOKUP TABLE
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Metro:
+    """One metro area inside a state.
+
+    Attributes:
+        name: Metro name, e.g. "Los Angeles". Used as ``geo_name`` in the DB.
+        counties: Principal county names used for the VIIRS aggregation.
+        indeed_location: Search text for Indeed, e.g. "Los Angeles, CA".
+    """
+
+    name: str
+    counties: tuple[str, ...]
+    indeed_location: str
+
+
+@dataclass(frozen=True)
+class StateInfo:
+    """Everything the pipelines need to know about the active state.
+
+    Attributes:
+        name: Full state name, e.g. "California".
+        abbr: Two-letter postal abbreviation, e.g. "CA".
+        fips: Two-digit FIPS code as text, e.g. "06".
+        metros: The state's metro areas (see ``Metro``).
+    """
+
+    name: str
+    abbr: str
+    fips: str
+    metros: tuple[Metro, ...]
+
+
+def get_state_info(state: str | None = None) -> StateInfo:
+    """Look up a US state and return its ``StateInfo``.
+
+    Args:
+        state: Full state name or two-letter abbreviation (case-insensitive).
+            If omitted, the active ``STATE`` from this file is used.
+
+    Returns:
+        A ``StateInfo`` with abbreviation, FIPS code and metros.
+
+    Raises:
+        ValueError: If the state is not in the lookup table.
+    """
+    wanted = (state if state is not None else STATE).strip().lower()
+    for name, (abbr, fips, metros) in _STATE_TABLE.items():
+        if wanted in (name.lower(), abbr.lower()):
+            return StateInfo(
+                name=name,
+                abbr=abbr,
+                fips=fips,
+                metros=tuple(
+                    Metro(
+                        name=metro_name,
+                        counties=tuple(counties),
+                        indeed_location=f"{metro_name}, {abbr}",
+                    )
+                    for metro_name, counties in metros
+                ),
+            )
+    raise ValueError(
+        f"Unknown state {state if state is not None else STATE!r}. "
+        "Use a full US state name or abbreviation listed in config._STATE_TABLE."
+    )
+
+
+def list_states() -> list[str]:
+    """Return the names of all states available in the lookup table.
+
+    Returns:
+        A list of full state names, in alphabetical order.
+    """
+    return sorted(_STATE_TABLE)
+
+
+# ---------------------------------------------------------------------------
+# 4. SETTINGS
+# ---------------------------------------------------------------------------
+ROOT_DIR = Path(__file__).resolve().parent
+DATA_DIR = ROOT_DIR / "data"
+RAW_DIR = DATA_DIR / "raw"
+PROCESSED_DIR = DATA_DIR / "processed"
+
+# SQLite database file. Can be overridden with the ALTSIGNAL_DB environment
+# variable (the unit tests use this to work on a temporary database).
+DB_PATH = Path(os.environ.get("ALTSIGNAL_DB", DATA_DIR / "altsignal.db"))
+
+# --- Staleness alert -------------------------------------------------------
+# Alert if a source has not had a successful scrape for this many hours.
+STALENESS_HOURS = 48
+
+# Names used in the ``source`` column of the ``scrapes`` and ``signals`` tables.
+SOURCE_MSRS = "msrs"
+SOURCE_INDEED = "indeed"
+SOURCE_VIIRS = "viirs"
+SOURCE_FRED_CARD = "fred_card"
+SOURCE_FRED_TARGETS = "fred_targets"
+ALL_SOURCES = (
+    SOURCE_MSRS,
+    SOURCE_INDEED,
+    SOURCE_VIIRS,
+    SOURCE_FRED_CARD,
+    SOURCE_FRED_TARGETS,
+)
+
+# Rolling window used for each signal's z-score (number of periods).
+# Spec: "rolling 12-month baseline"; weekly series use 52 weeks (~12 months).
+ZSCORE_WINDOW = {"monthly": 12, "weekly": 52}
+
+# --- Census MSRS -----------------------------------------------------------
+MSRS_BASE_URL = "https://www.census.gov/retail/mrts/www/statedata"
+MSRS_FILES = {
+    "yy": "state_retail_yy.csv",              # year-over-year % changes
+    "coverage": "state_retail_coverage.csv",  # non-imputed coverage class A-D
+}
+# The Census site rejects requests without a browser-like User-Agent string.
+HTTP_USER_AGENT = "AltSignal research project (python-requests)"
+
+# --- Indeed ----------------------------------------------------------------
+# The omkarcloud/indeed-scraper project runs as a small local web server
+# (``python run.py`` inside its repo). We call that server over HTTP.
+INDEED_API_URL = os.environ.get("INDEED_API_URL", "http://localhost:8000")
+INDEED_RADIUS_MILES = 25      # search radius around each metro's name
+INDEED_MAX_PAGES = 50         # the scraper serves at most 50 pages x 20 jobs
+INDEED_PAUSE_SECONDS = 0.5    # polite pause between page requests
+INDEED_TIMEOUT_SECONDS = 60
+INDEED_SCHEDULE_HOUR = 6      # daily run time (24h clock, local time)
+INDEED_SCHEDULE_MINUTE = 0
+# Raw (deduplicated) postings are kept here so job IDs are never counted twice.
+INDEED_POSTINGS_DIR = RAW_DIR / "indeed"
+
+# --- VIIRS nighttime lights (Google Earth Engine) --------------------------
+VIIRS_DATASET = "NOAA/VIIRS/DNB/MONTHLY_V1/VCMCFG"
+VIIRS_RADIANCE_BAND = "avg_rad"
+VIIRS_COVERAGE_BAND = "cf_cvg"   # number of cloud-free nights behind each pixel
+# A pixel counts as "low coverage" if fewer than this many cloud-free
+# observations went into it (cf_cvg < threshold, or no data at all).
+VIIRS_LOW_COVERAGE_MIN_OBS = 3
+# Drop a metro-month if more than this share of its pixels is low coverage.
+VIIRS_MAX_LOW_COVERAGE_SHARE = 0.20
+VIIRS_START_DATE = "2019-01-01"   # same first month as MSRS
+VIIRS_SCALE_METERS = 463.83       # native pixel size (15 arc-seconds)
+COUNTIES_DATASET = "TIGER/2018/Counties"
+STATES_DATASET = "TIGER/2018/States"
+# Earth Engine needs a Google Cloud project. Set EE_PROJECT (or the standard
+# GOOGLE_CLOUD_PROJECT). For a service account also set EE_SERVICE_ACCOUNT and
+# EE_PRIVATE_KEY_FILE; otherwise run ``earthengine authenticate`` once.
+EE_PROJECT = os.environ.get("EE_PROJECT") or os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+# --- FRED -------------------------------------------------------------------
+# Free API key: https://fred.stlouisfed.org/docs/api/api_key.html
+# Put it in the FRED_API_KEY environment variable (never commit it).
+FRED_TARGET_SERIES = {
+    # signal_id: (series id template, geo level, unit)
+    # "{abbr}" is replaced with the state abbreviation (e.g. "CAUR").
+    "unemployment_rate_state": ("{abbr}UR", "state", "percent"),
+    "unemployment_rate_national": ("UNRATE", "national", "percent"),
+    "retail_sales_national": ("RSAFS", "national", "millions_usd"),
+}
+# SF Fed card spending: there is NO verified FRED series ID for this (see
+# blockers.md), so the ID is not guessed. Set CARD_SPENDING_SERIES_ID once a
+# real series is confirmed.
+CARD_SPENDING_SERIES_ID = os.environ.get("CARD_SPENDING_SERIES_ID") or None
+CARD_SPENDING_UNIT = "index"

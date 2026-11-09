@@ -5,9 +5,9 @@ data sources, for any US state: state retail sales (consumption proxy), job
 postings, and satellite nighttime lights. The full specification is in
 [`docs/altsignal-spec.md`](docs/altsignal-spec.md).
 
-**Status: phase one only (ingestion pipelines).** Cleaning/alignment, features,
-models, the Streamlit app and the final write-up come in later phases.
-Phase-one blockers are listed in [`blockers.md`](blockers.md).
+**Status: phases one (ingestion) and two (cleaning, alignment, final signals
+table) are built.** Features, models, the Streamlit app and the final write-up
+come in later phases. Open blockers are listed in [`blockers.md`](blockers.md).
 
 ## Choosing the state
 
@@ -34,6 +34,8 @@ python -m src.ingest.viirs             # VIIRS (needs Earth Engine, below)
 python -m src.ingest.fred              # FRED: official targets + card spending
 python -m src.ingest.run_all           # everything, then the staleness check
 python -m src.ingest.staleness         # only the 48-hour staleness check
+
+python -m src.process.build_signals    # phase two: clean + align + z-scores
 ```
 
 Data goes into the SQLite database `data/altsignal.db` (created automatically).
@@ -57,6 +59,51 @@ daily (APScheduler, time set by `INDEED_SCHEDULE_HOUR` in `config.py`).
 Because the staleness alert fires when a source has no successful scrape in 48
 hours, schedule `run_all` (or cron) at least daily.
 
+## Phase two: building the signals table
+
+`python -m src.process.build_signals` turns what ingestion stored into the
+final, analysis-ready `signals` table for the active `STATE` (plus the national
+series). Run it after the ingest commands, as often as you like: it is
+**idempotent** (the table is unique on signal, geography, period and grain, so
+reruns update rows in place and never duplicate them).
+
+What it does, per source:
+
+1. **Checks units**: a series with more than one unit stops the build for that
+   source with an error. Z-scores are computed per series (signal, geography,
+   grain), so values with different units are never mixed.
+2. **Cleans** (`src/process/clean.py`) by dropping, never repairing: rows with
+   no value, monthly rows not aligned to a calendar month, values outside the
+   plausible range for their unit (`config.PLAUSIBLE_RANGE`, e.g. negative job
+   counts), and VIIRS months with more than 20% low-coverage pixels. Dropped rows
+   are also deleted from the table. **Nothing is imputed or interpolated.**
+3. **Aligns to monthly** (`src/process/align.py`). Native monthly sources are
+   untouched. Indeed postings are re-counted per calendar month (same
+   `signal_id` as the weekly series, `grain = "monthly"`; the weekly rows remain
+   with `grain = "weekly"`). Series published less often than monthly would be
+   repeated across their months and tagged `grain = "quarterly_repeated"`; no
+   current source needs this yet.
+4. **Normalizes**: `normalized_value` = z-score against the series' own previous
+   12 months (empty until 12 months of history exist). Indeed months scraped on
+   fewer than 80% of their days (`config.INDEED_MIN_MONTH_COVERAGE`) get no
+   z-score and are left out of baselines.
+5. **Reports** per source: `built`, `no data` (not ingested yet, e.g. VIIRS or
+   FRED without credentials), `skipped` (optional card spending) or `error`.
+
+The command exits 0 if at least one source was built and nothing is wrong.
+Missing-credential sources are reported, not treated as failures.
+
+### `quality_score` (0 to 1) means different things per source
+
+Scores are features, not filters, and are **not comparable across sources**.
+
+| Source | Meaning |
+| --- | --- |
+| `msrs` | Census non-imputed coverage class A-D, as the middle of its range (0.05, 0.175, 0.375, 0.75). Low values mean the estimate is mostly modeled. |
+| `viirs` | Share of pixels with adequate cloud-free coverage (at least 0.80 after cleaning). |
+| `indeed` | Share of the period's days on which Indeed was scraped. |
+| `fred_*` | 1.0: the published official number itself. |
+
 ## What is stored
 
 Four SQLite tables (`src/db.py`, the only module that touches the database):
@@ -75,7 +122,11 @@ row `monthly` or `weekly`.
 | Indeed | `indeed_postings_<sector>`, `indeed_postings_total` | weekly | New unique postings per metro and sector (see caveats). `quality_score` = share of the week's days scraped. |
 | VIIRS | `viirs_avg_radiance` | monthly | Mean radiance per metro and for the state; `quality_score` = share of pixels with adequate coverage; months with more than 20% low-coverage pixels are dropped. |
 | FRED targets | `fred_unemployment_rate_state`, `fred_unemployment_rate_national`, `fred_retail_sales_national` | monthly | Official numbers to be nowcast later. |
-| FRED card spending | `card_spending_index` | monthly | National cross-check only. Needs a configured series ID (see `blockers.md`). |
+| FRED card spending | `card_spending_index` | monthly | National cross-check only. Optional: needs a configured series ID (see `blockers.md`); the build skips it when absent. |
+
+Metro rows are named with their state (`Springfield, MA`) because metro names
+repeat across states; the database can therefore hold several states at once,
+and each build only touches the active state's rows.
 
 ## Data sources, access terms and limitations
 
@@ -92,8 +143,10 @@ row `monthly` or `weekly`.
   sees postings Indeed returns (large metros come back well below the count
   Indeed reports); a metro is searched by city name plus a 25-mile radius, which
   only approximates the metro; the "sector" is Indeed's own occupation grouping;
-  and a posting is counted in the week we first saw it, not the week it was
-  published.
+  and a posting is counted in the week (or month) we first saw it, not when it
+  was published. A month's `quality_score` is computed from the scrape log, which
+  does not record the state, so scrapes of different states on different days
+  would all count as observed days; scrape one state at a time per database.
 * **VIIRS** (NOAA/VIIRS/DNB/MONTHLY_V1/VCMCFG) is public domain; Earth Engine
   is free for noncommercial use. A pixel counts as low coverage when fewer than
   3 cloud-free nights contributed to it (`config.VIIRS_LOW_COVERAGE_MIN_OBS`);
@@ -126,6 +179,7 @@ config.py        active state + lookup table + settings
 src/db.py        the only module that touches SQLite
 src/normalize.py rolling z-scores
 src/ingest/      msrs.py, indeed.py, viirs.py, fred.py, staleness.py, run_all.py
+src/process/     clean.py, align.py, build_signals.py (phase two)
 tests/           unit tests (python -m pytest)
 data/            raw/ and processed/ files (git-ignored) and the SQLite file
 notebooks/ app/  placeholders for later phases

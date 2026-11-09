@@ -66,7 +66,8 @@ def test_weekly_counts_by_sector_metro_and_zero_fill():
         {"job_id": "c", "first_seen": "2026-11-16", "metro": "San Diego", "sector": "Retail Occupations", "date_published": ""},
     ])
     observed = {date(2026, 11, 9), date(2026, 11, 10), date(2026, 11, 16)}
-    rows = indeed.weekly_counts(postings, "California", ["Los Angeles", "San Diego"], observed)
+    metros = [m for m in config.get_state_info("California").metros if m.name in ("Los Angeles", "San Diego")]
+    rows = indeed.weekly_counts(postings, "California", metros, observed)
     rows["period_start"] = pd.to_datetime(rows["period_start"])
 
     def value(signal, geo, week):
@@ -74,9 +75,9 @@ def test_weekly_counts_by_sector_metro_and_zero_fill():
         assert len(match) == 1, (signal, geo, week)
         return match["value"].iloc[0]
 
-    assert value("indeed_postings_healthcare", "Los Angeles", pd.Timestamp("2026-11-09")) == 2
-    assert value("indeed_postings_healthcare", "Los Angeles", pd.Timestamp("2026-11-16")) == 0
-    assert value("indeed_postings_retail", "San Diego", pd.Timestamp("2026-11-16")) == 1
+    assert value("indeed_postings_healthcare", "Los Angeles, CA", pd.Timestamp("2026-11-09")) == 2
+    assert value("indeed_postings_healthcare", "Los Angeles, CA", pd.Timestamp("2026-11-16")) == 0
+    assert value("indeed_postings_retail", "San Diego, CA", pd.Timestamp("2026-11-16")) == 1
     assert value("indeed_postings_total", "California", pd.Timestamp("2026-11-09")) == 2
     assert set(rows["grain"]) == {"weekly"}
     week1 = rows[rows.period_start == pd.Timestamp("2026-11-09")]

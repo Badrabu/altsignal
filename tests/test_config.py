@@ -37,3 +37,6 @@ def test_every_state_is_complete_and_unique():
         for metro in info.metros:
             assert metro.counties
             assert metro.indeed_location == f"{metro.name}, {info.abbr}"
+            assert metro.geo_name == metro.indeed_location
+    all_geo = [m.geo_name for i in infos for m in i.metros]
+    assert len(all_geo) == len(set(all_geo))   # unique across states (Springfield MA vs MO)

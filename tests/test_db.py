@@ -123,3 +123,13 @@ def test_forecast_for_unknown_model_is_rejected():
     db.init_db()
     with pytest.raises(ValueError, match="unknown model_id"):
         db.write_forecasts([{"model_id": "ghost", "target_period": "2026-06-01", "predicted_value": 1.0}])
+
+
+def test_delete_signals_removes_only_the_given_rows():
+    """delete_signals deletes by key and leaves other rows alone."""
+    db.init_db()
+    db.write_signals([make_signal(), make_signal(period_start="2026-02-01", period_end="2026-02-28")])
+    removed = db.delete_signals(pd.DataFrame([make_signal(period_start="2026-02-01")]))
+    assert removed == 1
+    assert list(db.read_signals()["period_start"]) == ["2026-01-01"]
+    assert db.delete_signals(pd.DataFrame()) == 0

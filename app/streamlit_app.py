@@ -264,7 +264,7 @@ def render_nowcast_tab(info: config.StateInfo, signals: pd.DataFrame, choice: dl
     st.subheader("Nowcast versus official release")
     st.warning(
         "**Read this first: the results are weak and not convincing.** The test window is only a handful of months, "
-        "the models are at best barely better than simple naive benchmarks, and nothing here shows that the alternative "
+        "models that could be fitted are at best barely better than simple naive benchmarks (and for some targets no model could be fitted at all), and nothing here shows that the alternative "
         "signals add information. Treat every number below as a diagnostic, not as proof of nowcasting skill. "
         "The README has the details and caveats.")
     targets = list(config.FEATURE_TARGETS)

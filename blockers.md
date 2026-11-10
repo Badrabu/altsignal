@@ -249,14 +249,22 @@ remove it but were not used. All scores are somewhat optimistic for that reason.
   verify on first deploy: that Community Cloud picks `app/requirements.txt` (next
   to the entry point) rather than the root file; if it picks the root file the app
   still works, only the install is slower.
-* **The demo database holds MSRS (California) and the phase-four models only.**
-  FRED (key), VIIRS (Earth Engine) and card spending (no verified series) are
-  still blocked as described above, and Indeed has too little history for a
+* **The demo database holds MSRS (California), the real FRED official series
+  and the phase-four naive benchmarks.** It was refreshed after the real FRED run:
+  the unemployment target (California `CAUR`) now appears in tab 2 with its naive
+  scores. No ridge or tree rows exist, because none could be fitted (see "Real FRED
+  run: October 2025 gap"); the app says so. VIIRS (Earth Engine) and card spending
+  (no verified series) are still blocked, and Indeed has too little history for a
   z-score and is deliberately never exported to the public demo (scraped data,
   non-commercial use only). The app shows each of these as "No data yet" with the
-  reason; nothing is faked. Consequence for tab 3: cross-source divergences cannot
-  be assessed yet; only subsector-versus-total divergences within retail (MSRS) are
-  shown.
+  reason; nothing is faked. FRED z-scores stop at Sep 2025 (the missing October 2025
+  release), so tab 1 shows that older latest month for them. Cross-source
+  divergences still cannot be assessed (the official FRED targets are not compared as signals);
+  only subsector-versus-total divergences within retail (MSRS) are shown.
+* **Stale model rows.** `run_models` never deletes model rows from an earlier run
+  that no longer exist (for example ridge rows left by a trial run); the demo and
+  stored results had to be rebuilt from a fresh database. Worth a fix in a later
+  phase if models are rerun against an existing database.
 * **Manual refresh.** The demo snapshot is rebuilt by hand with
   `python -m src.export_demo` and committed; nothing refreshes it automatically.
   It is a binary SQLite file in git, so each refresh adds about its size (~250 KB)

@@ -199,6 +199,10 @@ def honesty_notes(scoreboard: pd.DataFrame, forecasts: pd.DataFrame, short_names
     if n_test:
         notes.append(f"The test window has only {n_test} scored months, so any ranking of models can flip easily.")
     best_naive = best_naive_id(scoreboard)
+    if fitted.empty:
+        notes.append("No ridge, tree or boosting model has test scores for this target: none could be fitted under the "
+                     "pre-set rules (too few complete training rows), so only the naive benchmarks are scored. "
+                     "See the README and blockers.md.")
     for _, row in fitted.iterrows():
         name = short_names.get(row["model_id"], row["model_id"])
         if pd.isna(row["rmse_vs_naive"]):

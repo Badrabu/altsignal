@@ -49,14 +49,16 @@ def test_active_state_comes_from_config(monkeypatch):
     assert not at.exception
     page = texts(at)
     assert "Active state: Texas (TX)" in page
-    assert "No data yet for Texas" in page                              # the demo holds California only
+    assert "No MSRS rows stored yet" in page                            # the demo holds California's state data only
+    assert "Retail: Total retail excl. nonstore retailers" not in page  # California's series are not shown for Texas
 
 
 def test_blocked_sources_show_no_data_yet_not_fake_data():
     at = run_app()
     page = texts(at)
-    for needle in ("No Indeed data yet", "No VIIRS data yet", "No card spending data yet", "No FRED data yet"):
+    for needle in ("No Indeed data yet", "No VIIRS data yet", "No card spending data yet"):
         assert needle in page
+    assert "No FRED data yet" not in page                               # the demo holds the real FRED official series
     assert "Do not build anything commercial on scraped Indeed data" in page   # disclaimer is always visible
 
 
@@ -73,23 +75,34 @@ def test_raw_normalized_toggle_changes_the_values():
 
 
 def test_nowcast_tab_shows_weakness_warning_scoreboard_and_error_history():
+    """With real FRED data no model could be fitted, so only the naive benchmarks are scored."""
     at = run_app()
     assert any("weak and not convincing" in w.value for w in at.warning)
     page = texts(at)
     assert "Full error history" in page and "Test-period accuracy" in page
+    assert "No ridge, tree or boosting model has test scores" in page
     frames = [d.value for d in at.dataframe]
     board = next(f for f in frames if "Test RMSE" in f.columns)
-    assert {"naive_locf", "naive_seasonal", "ridge", "tree"} <= set(board["Model"])
+    assert set(board["Model"]) == {"naive_locf", "naive_seasonal"}
     assert (board["Test months"] == 6).all()
     history = next(f for f in frames if "Error (official - prediction)" in f.columns)
-    assert len(history) == 24                                           # 4 models x 6 scored months
+    assert len(history) == 12                                           # 2 naive benchmarks x 6 scored months
 
 
-def test_unemployment_target_shows_no_data_yet():
+def test_unemployment_target_shows_real_official_data_and_naive_scores():
     at = run_app()
     at.selectbox(key="target").set_value("unemployment").run()
     assert not at.exception
-    assert any("No data yet" in i.value and "FRED_API_KEY" in i.value for i in at.info)
+    frames = [d.value for d in at.dataframe]
+    board = next(f for f in frames if "Test RMSE" in f.columns)
+    scores = board.set_index("Model")
+    assert set(scores.index) == {"naive_locf", "naive_seasonal"}
+    assert scores.loc["naive_locf", "Test MAE"] == pytest.approx(0.0333, abs=1e-3)
+    assert scores.loc["naive_locf", "Test RMSE"] == pytest.approx(0.0577, abs=1e-3)
+    assert scores.loc["naive_seasonal", "Test MAE"] == pytest.approx(0.30, abs=1e-6)
+    history = next(f for f in frames if "Error (official - prediction)" in f.columns)
+    assert len(history) == 12
+    assert not any("FRED_API_KEY" in i.value for i in at.info)
 
 
 def test_divergence_tab_has_summary_from_rules():

@@ -35,7 +35,8 @@ SOURCE_CATALOGUE = [
      "no_data": ("No card spending data yet. No verified FRED series ID exists for the SF Fed card "
                  "spending index (see blockers.md).")},
     {"source": config.SOURCE_FRED_TARGETS, "title": "Official targets from FRED",
-     "no_data": ("No FRED data yet. It needs a free `FRED_API_KEY` (blocked so far, see blockers.md).")},
+     "no_data": ("No FRED data yet. Run `python -m src.ingest.fred` with a free `FRED_API_KEY` "
+                 "(not in this database, see the README).")},
 ]
 
 TARGET_TITLES = {"retail_sales": "Retail sales (Census MSRS, year-over-year %)",
@@ -43,7 +44,7 @@ TARGET_TITLES = {"retail_sales": "Retail sales (Census MSRS, year-over-year %)",
 TARGET_NO_DATA = {
     "retail_sales": "No retail sales nowcasts yet. Run build_features and run_models (see README).",
     "unemployment": ("No unemployment nowcasts yet: the official series comes from FRED, which needs "
-                     "`FRED_API_KEY` (blocked so far, see blockers.md)."),
+                     "`FRED_API_KEY` (not in this database); run the FRED ingest, build_features and run_models."),
 }
 
 UNIT_LABELS = {"percent_yoy": "% year-over-year", "percent": "%", "postings": "postings",

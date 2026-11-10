@@ -494,7 +494,12 @@ card spending, and Indeed while it has little history) is shown with a clear
 "No data yet" message that says why. Nothing is imputed, interpolated or carried
 forward; a missing month stays a gap in the charts; a series with fewer than 12
 months of history has no z-score and is shown without one. With the committed
-demo data, only Census MSRS and the models built on it appear.
+demo data, Census MSRS (California) and the official FRED series (state and
+national unemployment, national retail sales) appear, with the naive-benchmark
+results of phase four. Because the October 2025 unemployment release does not
+exist, the FRED z-scores stop at Sep 2025 (a z-score needs a full 12-month
+baseline), so the signals tab shows them with that older latest month; raw values
+go to Sep 2026.
 
 Code: `app/streamlit_app.py` (the page), `app/data_loading.py` (reads through
 `db.py`), `app/analysis.py` (trend, scoreboard, caveats), `app/divergence.py`
@@ -515,7 +520,8 @@ it from your live database, for the active state only:
 
 * `signals`: state-level and national monthly rows of the sources in
   `config.DEMO_EXPORT_SOURCES` (Census MSRS, VIIRS, FRED official series).
-  Today only **MSRS (California)** exists, which is public Census data.
+  Today that is **MSRS (California)** and the real **FRED** official series
+  (state and national), both public data.
 * `models` and `forecasts` of that state.
 * **Not exported:** the `scrapes` log, metro rows, the weekly grain, the card
   spending index (third-party terms) and **all Indeed data** (scraped,
@@ -536,7 +542,8 @@ git add data/demo/altsignal_demo.db && git commit -m "Refresh demo data" && git 
 Streamlit Community Cloud redeploys when the push lands. The export leaves the
 existing file untouched if there is nothing to export. The snapshot in this
 repository was built on 2026-11-10 from the real MSRS download (California) and
-the phase-four results above.
+the phase-four results above: the real FRED series, and the naive benchmarks for
+both targets (no ridge or tree could be fitted, see phase four).
 
 ### Deploying to Streamlit Community Cloud (free)
 

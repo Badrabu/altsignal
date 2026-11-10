@@ -1,6 +1,6 @@
 # Blockers
 
-_Status after phase three: no new blockers. The three items below are unchanged; phases two and three for VIIRS and FRED are implemented and unit-tested against fixtures/mocks only._
+_Status after phase four: one blocker is now blocking real results (the FRED key, item 2 below, and see "Phase four notes"). Items 1-3 are otherwise unchanged; phases two and three for VIIRS and FRED are implemented and unit-tested against fixtures/mocks only._
 
 # Phase one blockers
 
@@ -155,6 +155,28 @@ and run `python -m src.ingest.viirs`.
   this helps is for phase four to measure; I did not evaluate models.
 * MSRS can also be revised after first release, and only the current vintage is
   stored, so it carries the same kind of (smaller, unquantified) revision risk.
+
+## Phase four notes
+
+* **FRED_API_KEY was not available in this environment** (the variable was not
+  set when phase four was built; its value was never read or printed). So the
+  real FRED ingest and the **unemployment target were not run**; only the
+  retail-sales target (Census MSRS, real data, no key needed) was modelled.
+  Unemployment is reported as "no data in the feature table", not faked. The
+  code path is the same for both targets and is unit-tested with synthetic
+  tables only. **To unblock:** export `FRED_API_KEY`, then run
+  `python -m src.ingest.fred`, `python -m src.process.build_signals`,
+  `python -m src.features.build_features` and `python -m src.models.run_models`
+  (the unemployment train/test split is defined and frozen on the first build).
+* **Revision look-ahead is still open** (phase three note above). FRED
+  vintages (`get_series_first_release` / `get_series_as_of_date`) would fix it
+  for unemployment but cannot be tested without a key. MSRS vintages are not
+  stored at all.
+* **Result to review:** on the retail-sales target no model beats naive (see the
+  README results). That is a finding, not a bug, but it suggests phase three's
+  features should add the target's own lags and perhaps a way to handle the
+  2020-21 pandemic swings before more models are tried. Not done here (outside
+  phase four's scope).
 
 ## Decisions to review (not blockers)
 

@@ -6,8 +6,10 @@ postings, and satellite nighttime lights. The full specification is in
 [`docs/altsignal-spec.md`](docs/altsignal-spec.md).
 
 **Status: phases one (ingestion), two (cleaning, alignment, final signals
-table) and three (feature engineering) are built.** Models, the Streamlit app and the final write-up
-come in later phases. Open blockers are listed in [`blockers.md`](blockers.md).
+table), three (feature engineering) and four (models and benchmarks) are built.**
+The Streamlit app and the final write-up come in later phases. **Headline result of
+phase four: no model beats the naive benchmark** (see
+[Phase four: models and results](#phase-four-models-and-results)). Open blockers are listed in [`blockers.md`](blockers.md).
 
 ## Choosing the state
 
@@ -37,6 +39,7 @@ python -m src.ingest.staleness         # only the 48-hour staleness check
 
 python -m src.process.build_signals    # phase two: clean + align + z-scores
 python -m src.features.build_features  # phase three: feature table + frozen split
+python -m src.models.run_models        # phase four: benchmarks, models, test-set scores
 ```
 
 Data goes into the SQLite database `data/altsignal.db` (created automatically).
@@ -220,6 +223,105 @@ the test window) and raises on any test-period row, and `fit_standardizer` and
 Limitation: FRED returns the latest revised values, not what was known at the
 time, so official series carry some revision look-ahead (see `blockers.md`).
 
+## Phase four: models and results
+
+`python -m src.models.run_models` (run `build_features` first) fits the models
+for every target in the feature table, scores them on the frozen test set,
+writes the `models` and `forecasts` tables through `src/db.py` and saves
+`data/processed/models_<ST>.json` (parameters, CV scores, per-month test errors).
+It is **idempotent**: same features, same results, and reruns update the
+database rows (`models` is unique on model id + metric, `forecasts` on model id
++ target period) instead of adding new ones.
+
+### Design (fixed before any result was computed)
+
+* **Naive benchmarks** (`src/models/benchmarks.py`, committed first and
+  separately): *last observation carried forward* (the latest target value
+  already published at the prediction time, so for MSRS this is about four
+  months old) and *year-over-year seasonal naive* (the target's own value 12
+  months earlier). Both use only values public at `as_of`, as the models do.
+* **Ridge regression** (primary): features standardized with
+  `fit_standardizer`, columns chosen with `select_columns` (at most 50% missing
+  in training), penalty chosen by **time-series cross-validation inside the
+  training window** (expanding window, 5 folds of 6 months, scaler re-fitted in
+  every fold, and a gap of as many months as the target's release lag keeps
+  labels that were not yet public out of the training part). Training rows with
+  any missing feature are dropped; nothing is imputed. A row to predict with a
+  missing feature gets no forecast.
+* **Shallow decision tree** (depth 2-3, tuned by the same CV) as comparison.
+* **Gradient boosting** runs only if ridge "works", defined in advance as: ridge
+  beats the best naive benchmark in the training-window CV (never on the test
+  set).
+* **Test set**: the frozen last six months of each target. Everything that
+  learns takes a `TrainSet`, which cannot hold a test row; test rows are used
+  only to score models after they are fixed. Every model is scored on the same
+  months. MAE and RMSE are reported for every model and benchmark.
+* "**Meaningfully better than naive**" means MAE *and* RMSE at least 10% below
+  the best naive benchmark (`config.MEANINGFUL_MARGIN`, set in advance).
+* `forecasts` holds only out-of-sample rows: the test months and the months still
+  to be nowcast (`actual_value` empty); `error` = actual - predicted. Model ids
+  look like `CA_retail_sales_ridge`, `CA_retail_sales_naive_locf`.
+
+### Results (California, retail sales; test window Jan-Jun 2026)
+
+Target: the Census MSRS total retail year-over-year % change (`msrs_yoy_TOTAL`).
+Features come from the MSRS subsector series only (no Indeed, VIIRS or FRED data
+exists in this database yet). 63 complete training rows (Oct 2020-Dec 2025).
+
+| Model | MAE | RMSE | Tuned parameters (training CV RMSE) |
+| --- | --- | --- | --- |
+| Naive: last observation carried forward | **1.57** | **2.18** | none |
+| Naive: seasonal (value 12 months earlier) | 2.65 | 3.25 | none |
+| Ridge | 4.30 | 4.65 | alpha = 10,000 (8.34) |
+| Decision tree | 8.87 | 10.14 | depth 2, min leaf 8 (14.34) |
+| Gradient boosting | not run | not run | ridge did not beat naive in the training CV |
+
+(Units: percentage points of year-over-year growth. In the training CV, ridge
+had an RMSE of 8.34 against 2.85 for LOCF and 3.66 for seasonal naive.)
+
+**Honest reading: no model beats naive, by any margin.** The best naive
+benchmark (carrying the last published value forward) has less than half the
+RMSE of ridge, the best model. Ridge picked the largest penalty in its grid,
+which means the cross-validation preferred a model that is almost constant, and
+it still predicts about 6.5% growth (the average of its usable training rows,
+lifted by 2021 base effects of up to +82%) against actual growth of 1-6% in the
+test months. The tree does worse. The models were not tuned further after seeing the
+test result (that would use the test set); a wider penalty grid would at most
+move ridge towards the training average.
+
+Why this should not surprise us, and how far to trust it:
+
+* **Tiny samples.** 63 usable training rows, 90 correlated features, and only
+  **six** test months. A six-month comparison can easily flip, and a difference
+  of a point or two is within noise. "No model beats naive" is a statement about
+  this sample, not a proof that the signals are useless.
+* **The training window is dominated by the pandemic.** The target ranges from
+  -34% (Apr 2020) to +82% (Apr 2021) year over year (base effects), which drives the fitted
+  levels; the 2026 test months are calm (1-6%). A model fitted this way
+  over-predicts a calm period.
+* **The naive benchmark is not weak here.** Year-over-year growth is persistent,
+  and LOCF may use any value published before the prediction date, including
+  early test-window months as they get published. The models are not given the
+  target's own lags as features (phase three builds features from the signals
+  only), so they have less information than LOCF has.
+* **Models are fitted once** on the whole training window, not re-estimated as
+  data arrive, and the CV gap only approximates real-time conditions.
+* **Revision look-ahead.** FRED returns the latest revised values, not what was
+  known at the time, and MSRS is also revised and only the current vintage is
+  stored (see `blockers.md`). Results for official series would be somewhat
+  too optimistic for any model; vintage data was not available to correct this.
+* Job postings and nighttime lights are not in these results: there is not yet
+  enough Indeed history for z-scores and VIIRS needs Earth Engine access.
+
+### Unemployment target: not run yet
+
+State unemployment (national `UNRATE` as the fallback) needs FRED data, and no
+`FRED_API_KEY` was available when phase four was built. Nothing was faked: the
+command reports `target unemployment: no data in the feature table`. With a key,
+run `python -m src.ingest.fred`, `build_signals`, `build_features` and
+`run_models`; the same code and rules then apply to unemployment. See
+`blockers.md`.
+
 ## What is stored
 
 Four SQLite tables (`src/db.py`, the only module that touches the database):
@@ -298,6 +400,7 @@ src/normalize.py rolling z-scores
 src/ingest/      msrs.py, indeed.py, viirs.py, fred.py, staleness.py, run_all.py
 src/process/     clean.py, align.py, build_signals.py (phase two)
 src/features/    engineer.py, split.py, build_features.py (phase three)
+src/models/      benchmarks.py, fit.py, run_models.py (phase four)
 tests/           unit tests (python -m pytest)
 data/            raw/ and processed/ files (git-ignored) and the SQLite file
 notebooks/ app/  placeholders for later phases

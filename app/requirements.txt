@@ -1,0 +1,9 @@
+# Dependencies of the Streamlit dashboard only (app/streamlit_app.py).
+# Streamlit Community Cloud installs the requirements file that sits next to the
+# app's entry point, so the deployed app skips the heavy pipeline libraries
+# (earthengine-api, fredapi, scikit-learn, ...). The root requirements.txt has
+# everything for running the whole project locally.
+streamlit>=1.50      # the app (altair for charts is installed with it)
+pandas>=2.2          # tables
+numpy>=1.26          # used by pandas and the app's trend rules
+requests>=2.31       # imported (not called) by src/ingest/msrs.py for the retail subsector names

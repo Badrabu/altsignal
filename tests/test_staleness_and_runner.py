@@ -98,11 +98,10 @@ def test_run_all_runs_every_source_even_when_some_fail(monkeypatch):
     monkeypatch.setattr(run_all.msrs, "ingest", fake("msrs", True))
     monkeypatch.setattr(run_all.indeed, "ingest", fake("indeed", False))
     monkeypatch.setattr(run_all.viirs, "ingest", fake("viirs", False))
-    monkeypatch.setattr(run_all.fred, "ingest_card_spending", fake("fred_card", False))
     monkeypatch.setattr(run_all.fred, "ingest_targets", fake("fred_targets", True))
 
     results, stale = run_all.run_all()
-    assert calls == ["msrs", "indeed", "viirs", "fred_card", "fred_targets"]
-    assert [r.status for r in results] == ["success", "failed", "failed", "failed", "success"]
-    assert {s.source for s in stale} == {"indeed", "viirs", "fred_card"}
+    assert calls == ["msrs", "indeed", "viirs", "fred_targets"]
+    assert [r.status for r in results] == ["success", "failed", "failed", "success"]
+    assert {s.source for s in stale} == {"indeed", "viirs"}
     assert run_all.main([]) == 1

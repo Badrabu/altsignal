@@ -1,6 +1,6 @@
 """Alignment of every signal to the project's analysis grain: MONTHLY.
 
-Three situations are handled:
+Two situations are handled:
 
 1. Native monthly series (MSRS, VIIRS, FRED): nothing to do except check the
    rows are aligned to calendar months (``clean.py`` does that). Their ``grain``
@@ -12,13 +12,6 @@ Three situations are handled:
    the same ``signal_id`` as the weekly rows and use ``grain = "monthly"``; the
    weekly rows stay in the table with ``grain = "weekly"``. The quality score is
    the share of the month's days on which Indeed was actually scraped.
-
-3. Series published less often than monthly (e.g. quarterly): the value is
-   REPEATED across the months it covers and every repeated row is tagged with
-   ``grain = "quarterly_repeated"`` so nobody mistakes it for a real monthly
-   observation. Nothing is carried beyond the period the value covers, so this
-   is not imputation. (No current source is quarterly; the function is ready
-   for later ones.)
 """
 
 from __future__ import annotations
@@ -30,7 +23,6 @@ import pandas as pd
 
 import config
 from src.ingest.indeed import sector_slug
-from src.normalize import add_normalized_values
 
 
 def month_start(day: date) -> pd.Timestamp:
@@ -112,31 +104,3 @@ def indeed_monthly_rows(
         records.append({**base, "signal_id": "indeed_postings_total",
                         "geo_level": "state", "geo_name": state_name, "value": state_total})
     return pd.DataFrame(records)
-
-
-def repeat_to_monthly(quarterly: pd.DataFrame) -> pd.DataFrame:
-    """Spread quarterly rows across their three months, tagged as repeated.
-
-    The z-score is computed on the native QUARTERLY series first (baseline of
-    the previous 4 quarters, about 12 months) and then repeated with the value,
-    so repeated rows never create fake extra history.
-
-    Args:
-        quarterly: Signal rows with ``grain = "quarterly"`` and ``period_start``
-            on the first day of a quarter.
-
-    Returns:
-        Three monthly rows per quarterly row with ``grain = "quarterly_repeated"``
-        (empty if the input is empty).
-    """
-    if quarterly.empty:
-        return quarterly.copy()
-    scored = add_normalized_values(quarterly)
-    pieces = []
-    for offset in range(3):
-        piece = scored.copy()
-        piece["period_start"] = scored["period_start"] + pd.DateOffset(months=offset)
-        piece["period_end"] = piece["period_start"] + pd.offsets.MonthEnd(0)
-        piece["grain"] = "quarterly_repeated"
-        pieces.append(piece)
-    return pd.concat(pieces, ignore_index=True)

@@ -43,7 +43,7 @@ def test_build_with_nothing_ingested_reports_no_data():
     reports, problems = bs.build_signals("California")
     status = {r.source: r.status for r in reports}
     assert status == {"msrs": "no data", "viirs": "no data", "fred_targets": "no data",
-                      "fred_card": "skipped", "indeed": "no data"}
+                      "indeed": "no data"}
     assert problems == [] and db.read_signals().empty
     assert bs.main() == 1       # nothing was built
 
@@ -67,7 +67,6 @@ def test_build_is_idempotent(monkeypatch):
     patch_ee(monkeypatch, good_months)
     viirs.ingest("California", ee=FakeEE(), start_date="2023-01-01")
     fred.ingest_targets("California", fred=FakeFred())
-    fred.ingest_card_spending(fred=FakeFred(), series_id="SOME_SERIES")
     bs.build_signals("California")
     first = snapshot()
     count = len(first)
@@ -131,25 +130,17 @@ def test_viirs_low_coverage_months_never_reach_the_final_table(monkeypatch):
     assert set(table["unit"]) == {"nW/cm2/sr"}
 
 
-def test_fred_targets_built_and_card_spending_is_optional():
-    """Official series get quality 1.0; missing card spending does not fail the build."""
+def test_fred_targets_are_built_with_full_quality():
+    """Official series get quality 1.0."""
     ingest_msrs()
     fred.ingest_targets("California", fred=FakeFred())
     reports, problems = bs.build_signals("California")
     status = {r.source: r.status for r in reports}
-    assert status["fred_targets"] == "built" and status["fred_card"] == "skipped"
+    assert status["fred_targets"] == "built"
     assert problems == [] and bs.main() == 0
     rows = db.read_signals(source="fred_targets")
     assert (rows["quality_score"] == 1.0).all()
     assert set(rows["unit"]) == {"percent", "millions_usd"}
-
-
-def test_card_spending_is_processed_when_configured():
-    """When a card series was ingested it is built like the others."""
-    fred.ingest_card_spending(fred=FakeFred(), series_id="SOME_SERIES")
-    reports, _ = bs.build_signals("California")
-    assert by_source(reports)["fred_card"].status == "built"
-    assert db.read_signals(source="fred_card")["normalized_value"].notna().any()
 
 
 def test_units_are_never_mixed_across_signals():

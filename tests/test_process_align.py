@@ -57,37 +57,3 @@ def test_unobserved_months_get_no_rows():
 def test_no_scrapes_gives_empty_result():
     """Never scraped -> nothing to build."""
     assert align.indeed_monthly_rows(postings(), "California", METROS, set()).empty
-
-
-def quarterly(values):
-    """Quarterly rows (test data) starting 2023-Q1."""
-    starts = pd.date_range("2023-01-01", periods=len(values), freq="QS")
-    return pd.DataFrame({
-        "signal_id": "q", "source": "x", "geo_level": "national", "geo_name": "United States",
-        "period_start": starts, "period_end": starts + pd.offsets.QuarterEnd(0), "value": values,
-        "unit": "index", "quality_score": 1.0, "grain": "quarterly"})
-
-
-def test_quarterly_values_are_repeated_and_tagged():
-    """Each quarter becomes three months, all tagged 'quarterly_repeated'."""
-    out = align.repeat_to_monthly(quarterly([10.0, 20.0]))
-    assert len(out) == 6
-    assert set(out["grain"]) == {"quarterly_repeated"}
-    first = out[out["value"] == 10.0].sort_values("period_start")
-    assert list(first["period_start"]) == list(pd.to_datetime(["2023-01-01", "2023-02-01", "2023-03-01"]))
-    assert first["period_end"].iloc[-1] == pd.Timestamp("2023-03-31")
-
-
-def test_repeated_rows_share_the_native_zscore_and_do_not_extend_history():
-    """The z-score comes from the quarterly series (4-quarter baseline), not from repeated months."""
-    out = align.repeat_to_monthly(quarterly([1.0, 2.0, 3.0, 4.0, 10.0]))
-    last_quarter = out[out["value"] == 10.0]
-    assert last_quarter["normalized_value"].notna().all()
-    assert last_quarter["normalized_value"].nunique() == 1
-    assert out[out["value"] == 1.0]["normalized_value"].isna().all()
-    assert out["period_start"].max() == pd.Timestamp("2024-03-01")     # nothing carried past the last quarter
-
-
-def test_repeat_of_empty_input_is_empty():
-    """No quarterly data -> nothing."""
-    assert align.repeat_to_monthly(quarterly([]).iloc[0:0]).empty

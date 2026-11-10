@@ -3,7 +3,6 @@
 import pandas as pd
 import pytest
 
-import config
 from src import db
 from src.ingest import fred
 
@@ -71,35 +70,8 @@ def test_rejected_api_key_is_reported_as_key_problem():
     assert "rejected the API key" in result.error_message
 
 
-def test_card_spending_without_series_id_fails_clearly(monkeypatch):
-    """No series configured -> failed row pointing at blockers.md; nothing guessed."""
-    monkeypatch.setattr(config, "CARD_SPENDING_SERIES_ID", None)
-    client = FakeFred()
-    result = fred.ingest_card_spending(fred=client)
-    assert result.status == "failed"
-    assert "blockers.md" in result.error_message
-    assert client.requested == []
-
-
-def test_card_spending_with_configured_series():
-    """When a series id is configured the national index is stored."""
-    client = FakeFred()
-    result = fred.ingest_card_spending(fred=client, series_id="SOME_SERIES")
-    assert result.status == "success"
-    rows = db.read_signals(source="fred_card")
-    assert set(rows["geo_level"]) == {"national"}
-    assert set(rows["signal_id"]) == {"card_spending_index"}
-
-
-def test_card_spending_unknown_series_fails():
-    """A series FRED does not know is a logged failure."""
-    result = fred.ingest_card_spending(fred=FakeFred(missing={"NOPE"}), series_id="NOPE")
-    assert result.status == "failed"
-    assert "not found" in result.error_message
-
-
 def test_non_monthly_series_is_rejected():
     """Daily data must be converted first (a later phase), not silently stored."""
     daily = pd.Series([float(i) for i in range(40)], index=pd.date_range("2025-01-01", periods=40, freq="D"))
     with pytest.raises(fred.IngestError, match="not a monthly series"):
-        fred.series_to_rows(daily, "x", "national", "United States", "index", "fred_card")
+        fred.series_to_rows(daily, "x", "national", "United States", "index", "fred_targets")

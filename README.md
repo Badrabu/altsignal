@@ -6,14 +6,18 @@ postings, and satellite nighttime lights. The full specification is in
 [`docs/altsignal-spec.md`](docs/altsignal-spec.md).
 
 **Status: phases one (ingestion), two (cleaning, alignment, final signals
-table), three (feature engineering) and four (models and benchmarks) are built.**
-The Streamlit app and the final write-up come in later phases. **Headline result of
-phase four, with real FRED and Census data: no model beats the naive benchmark on
-unemployment (the last published value wins by a wide margin); on retail sales the
-ridge and tree look better than naive on a test window that shrank to four scorable
-months, but with weak evidence behind it** (see
-[Phase four: models and results](#phase-four-models-and-results)). Open blockers are
-listed in [`blockers.md`](blockers.md).
+table), three (feature engineering), four (models and benchmarks) and five (the
+Streamlit dashboard) are built.** The final write-up comes in phase six.
+**Headline result of phase four, with real FRED and Census data: no model beats the
+naive benchmark on unemployment (the last published value wins by a wide margin);
+on retail sales the ridge and tree look better than naive on a test window that
+shrank to four scorable months, but with weak evidence behind it** (see
+[Phase four: models and results](#phase-four-models-and-results)). The dashboard
+says so too ([Phase five](#phase-five-the-dashboard)). Open blockers are listed in
+[`blockers.md`](blockers.md).
+
+**Live demo:** _coming soon_ (placeholder until the app is deployed; see
+[Deploying](#deploying-to-streamlit-community-cloud-free)).
 
 ## Choosing the state
 
@@ -37,13 +41,16 @@ python -m pytest                       # unit tests (no network or keys needed)
 python -m src.ingest.msrs              # Census MSRS (no key needed)
 python -m src.ingest.indeed            # Indeed (needs the local scraper, below)
 python -m src.ingest.viirs             # VIIRS (needs Earth Engine, below)
-python -m src.ingest.fred              # FRED: official targets + card spending
+python -m src.ingest.fred              # FRED: official targets (unemployment, retail sales)
 python -m src.ingest.run_all           # everything, then the staleness check
 python -m src.ingest.staleness         # only the 48-hour staleness check
 
 python -m src.process.build_signals    # phase two: clean + align + z-scores
 python -m src.features.build_features  # phase three: feature table + frozen split
 python -m src.models.run_models        # phase four: benchmarks, models, test-set scores
+
+streamlit run app/streamlit_app.py     # phase five: the dashboard (see below)
+python -m src.export_demo              # refresh the committed demo database for deployment
 ```
 
 Data goes into the SQLite database `data/altsignal.db` (created automatically).
@@ -88,9 +95,7 @@ What it does, per source:
 3. **Aligns to monthly** (`src/process/align.py`). Native monthly sources are
    untouched. Indeed postings are re-counted per calendar month (same
    `signal_id` as the weekly series, `grain = "monthly"`; the weekly rows remain
-   with `grain = "weekly"`). Series published less often than monthly would be
-   repeated across their months and tagged `grain = "quarterly_repeated"`; no
-   current source needs this yet.
+   with `grain = "weekly"`).
 4. **Normalizes**: `normalized_value` = z-score against the series' own previous
    12 months (empty until 12 months of history exist). **One missing month in the
    baseline is tolerated** (`config.BASELINE_MIN_PERIODS`: 11 of 12 months, 51 of
@@ -102,8 +107,8 @@ What it does, per source:
    months scraped on fewer than 80% of their days
    (`config.INDEED_MIN_MONTH_COVERAGE`) still get no z-score and are left out of
    baselines (they count as missing months, so at most one may fall in a window).
-5. **Reports** per source: `built`, `no data` (not ingested yet, e.g. VIIRS or
-   FRED without credentials), `skipped` (optional card spending) or `error`.
+5. **Reports** per source: `built`, `no data` (not ingested yet, e.g. VIIRS
+   without Earth Engine access) or `error`.
 
 The command exits 0 if at least one source was built and nothing is wrong.
 Missing-credential sources are reported, not treated as failures.
@@ -134,7 +139,7 @@ Scores are features, not filters, and are **not comparable across sources**.
 
 Targets: `retail_sales` (Census MSRS total retail, state) and `unemployment`
 (state rate, falling back to the national rate). A target with no data yet
-(unemployment, until FRED credentials exist) is reported and skipped. Re-running
+(for example unemployment before the FRED ingest has run) is reported and skipped. Re-running
 with unchanged inputs rewrites identical files (idempotent).
 
 ### No look-ahead: prediction time and release lags
@@ -152,7 +157,6 @@ calendar month:
 | VIIRS | 90 (**assumed**, unverified) | about 3 months old |
 | State / national unemployment | 30 / 14 | month T-1 |
 | National retail sales (FRED) | 21 | month T-1 |
-| Card spending (optional) | 45 (assumed) | only if a series is configured |
 
 Lags are on the cautious side (a too-long lag loses a little information, a
 too-short one leaks the future). A series with no configured lag is skipped, not
@@ -352,8 +356,7 @@ Caveats:
 ### Current results: real FRED and Census data (California)
 
 **What was run.** `python -m src.ingest.fred` (`CAUR`, `UNRATE`, `RSAFS`; the
-`fred_targets` scrape logged `success`, 1,970 rows; the optional card spending
-source is skipped because no series ID exists), `python -m src.ingest.msrs`,
+`fred_targets` scrape logged `success`, 1,970 rows), `python -m src.ingest.msrs`,
 `build_signals`, `build_features`, `run_models`, all from a fresh database. The
 pre-committed rules were not touched: the naive benchmarks, the 10% margin, the
 gradient-boosting gate and the frozen test split. Two changes were forced by the
@@ -444,6 +447,120 @@ columns, different scored months.
   arrive. Indeed and VIIRS are not in these results (too little history, no Earth
   Engine access).
 
+## Phase five: the dashboard
+
+```bash
+pip install -r requirements.txt
+streamlit run app/streamlit_app.py       # opens http://localhost:8501
+```
+
+The app shows the **active state from `config.py`** (`STATE`) in a large heading
+and has three tabs. It only reads data, and only through `src/db.py`.
+
+1. **Signals.** For every signal of the active state (state-level and national,
+   monthly): the latest reading, the change since the previous month, the
+   current trend and the data quality, with a **raw / normalized (z-score)
+   toggle**. Raw values keep their own units and are never plotted together unless
+   they share a unit. *Trend rule* (fixed, in `app/analysis.py`): the mean of the
+   last 3 months against the mean of the 3 months before, divided by the series'
+   own standard deviation: at least 0.25 is "rising" or "falling", otherwise
+   "flat". A gap in the last 6 months gives "not enough data".
+2. **Nowcast vs official.** Model and naive predictions against the official
+   release, the **full error history** (every forecast that has been compared
+   with an official value) and the **test-period MAE and RMSE** of every model and
+   naive benchmark, read from the `models` and `forecasts` tables. Each model is
+   compared with the best naive benchmark using the pre-set 10% margin. **The tab
+   opens with a warning that the results are weak and not convincing**, as in
+   [Phase four](#phase-four-models-and-results), and adds rule-based caveats from
+   the numbers (few test months, errors that all have the same sign, an almost
+   constant forecast, a cross-validation score far worse than the test score).
+3. **Divergences.** Where signals disagree, compared as z-scores (each signal
+   against its own previous 12 months), never as raw values. Rules (in
+   `app/divergence.py`, thresholds in `config.py`): *level divergence* = opposite
+   signs with both at least 0.5 standard deviations from zero; *trend
+   divergence* = opposite 3-month changes of at least 0.5; a z-score gap of 2.0 or
+   more is "strong". Pairs are compared at their latest common month. Two
+   groups are shown: **across sources** (one headline series per source) and
+   **within retail** (each MSRS subsector against total retail). The
+   plain-language summary is generated from the numbers by deterministic Python
+   rules (same data, same text), **not by an LLM**.
+
+**No data yet, never fake data.** A source that is blocked or empty (VIIRS, and Indeed
+while it has little history) is shown with a clear
+"No data yet" message that says why. Nothing is imputed, interpolated or carried
+forward; a missing month stays a gap in the charts; a series with fewer than 12
+months of history has no z-score and is shown without one. With the committed
+demo data, Census MSRS (California) and the official FRED series (state and
+national unemployment, national retail sales) appear, with the phase-four results
+(naive benchmarks, ridge and tree) for both targets. The October 2025 unemployment
+release does not exist; the one-gap z-score rule keeps the FRED z-scores running
+through it (that month simply has no value).
+
+Code: `app/streamlit_app.py` (the page), `app/data_loading.py` (reads through
+`db.py`), `app/analysis.py` (trend, scoreboard, caveats), `app/divergence.py`
+(rules and summary). Tests: `tests/test_app_*.py` (rules and helpers) and
+`tests/test_streamlit_app.py` (Streamlit `AppTest` smoke tests of the whole app).
+
+### Which database the app reads
+
+The app uses the live database `data/altsignal.db` (or `ALTSIGNAL_DB`) when it
+exists and has signals. Otherwise it falls back to the committed **demo
+snapshot** `data/demo/altsignal_demo.db` and says so at the top of the page.
+
+### The demo database (what the deployed app reads)
+
+A deployed app has no credentials and cannot run the pipelines, so it reads a
+small committed SQLite file (about 250 KB). `python -m src.export_demo` rebuilds
+it from your live database, for the active state only:
+
+* `signals`: state-level and national monthly rows of the sources in
+  `config.DEMO_EXPORT_SOURCES` (Census MSRS, VIIRS, FRED official series).
+  Today that is **MSRS (California)** and the real **FRED** official series
+  (state and national), both public data.
+* `models` and `forecasts` of that state.
+* **Not exported:** the `scrapes` log, metro rows, the weekly grain and **all Indeed data** (scraped,
+  non-commercial use only). If you ever add Indeed data to a public demo, keep the
+  disclaimer shown in the app and read Indeed's terms first; the exporter does not
+  include it, and a test checks that the committed file contains only allowed
+  sources.
+
+**Refreshing the demo** (a manual step, there is no scheduler for it):
+
+```bash
+python -m src.ingest.msrs && python -m src.process.build_signals   # new data
+python -m src.features.build_features && python -m src.models.run_models
+python -m src.export_demo                                          # rewrite data/demo/altsignal_demo.db
+git add data/demo/altsignal_demo.db && git commit -m "Refresh demo data" && git push
+```
+
+Streamlit Community Cloud redeploys when the push lands. The export leaves the
+existing file untouched if there is nothing to export. The snapshot in this
+repository was built on 2026-11-10 from the real MSRS download (California) and
+the phase-four results above: the real FRED series and the models and naive
+benchmarks of both targets.
+
+### Deploying to Streamlit Community Cloud (free)
+
+1. Push the repository to GitHub (the app needs **no secrets**; nothing in the
+   repository is a credential, and `.streamlit/secrets.toml` is git-ignored).
+2. On [share.streamlit.io](https://share.streamlit.io) choose **Create app**,
+   pick the repository and branch, and set the main file path to
+   `app/streamlit_app.py`. Under *Advanced settings* choose **Python 3.12**.
+3. Dependencies: Community Cloud installs the requirements file next to the entry
+   point, `app/requirements.txt` (only `streamlit`, `pandas`, `numpy`,
+   `requests`), so the heavy pipeline libraries are not installed. The root
+   `requirements.txt` is complete for running everything locally, dashboard
+   included.
+4. Deploy, then put the app's URL in the **Live demo** line at the top of this
+   file.
+
+Changing the state in `config.py` and redeploying shows that state, but the demo
+database only holds the state it was exported for; other states show "No data
+yet" until you export them. The deployed app was **not** deployed from this
+environment (no Streamlit account was available), so the deployment steps above
+are untested on the real service. The app itself was run locally, and with a
+bare environment holding only `app/requirements.txt`.
+
 ## What is stored
 
 Four SQLite tables (`src/db.py`, the only module that touches the database):
@@ -463,7 +580,6 @@ row `monthly` or `weekly`.
 | Indeed | `indeed_postings_<sector>`, `indeed_postings_total` | weekly | New unique postings per metro and sector (see caveats). `quality_score` = share of the week's days scraped. |
 | VIIRS | `viirs_avg_radiance` | monthly | Mean radiance per metro and for the state; `quality_score` = share of pixels with adequate coverage; months with more than 20% low-coverage pixels are dropped. |
 | FRED targets | `fred_unemployment_rate_state`, `fred_unemployment_rate_national`, `fred_retail_sales_national` | monthly | Official numbers to be nowcast later. |
-| FRED card spending | `card_spending_index` | monthly | National cross-check only. Optional: needs a configured series ID (see `blockers.md`); the build skips it when absent. |
 
 Metro rows are named with their state (`Springfield, MA`) because metro names
 repeat across states; the database can therefore hold several states at once,
@@ -523,8 +639,10 @@ src/ingest/      msrs.py, indeed.py, viirs.py, fred.py, staleness.py, run_all.py
 src/process/     clean.py, align.py, build_signals.py (phase two)
 src/features/    engineer.py, split.py, build_features.py (phase three)
 src/models/      benchmarks.py, fit.py, run_models.py (phase four)
+src/export_demo.py  writes the committed demo database (phase five)
+app/             Streamlit dashboard: streamlit_app.py, data_loading.py, analysis.py, divergence.py
 tests/           unit tests (python -m pytest)
-data/            raw/ and processed/ files (git-ignored) and the SQLite file
-notebooks/ app/  placeholders for later phases
+data/            raw/ and processed/ files and the live SQLite file (git-ignored); data/demo/ is committed
+notebooks/       placeholder for later phases
 docs/            the specification
 ```

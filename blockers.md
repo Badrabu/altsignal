@@ -1,60 +1,27 @@
 # Blockers
 
-_Status after the real FRED run and the one-gap z-score rule: FRED works (item 2 below is resolved) and models run for both targets (section "Real FRED run: October 2025 gap" below). Items 1 and 3 are unchanged._
+_Status after phase five: nothing new blocks the dashboard (see "Phase five notes"). Status after the real FRED run and the one-gap z-score rule: FRED works and models run for both targets (section "Real FRED run: October 2025 gap"). Card spending was dropped (item 1). The only open external dependency is VIIRS (item 3)._
 
 # Phase one blockers
 
-Phase one is built and its unit tests pass (`python -m pytest`). Three pieces
+Phase one is built and its unit tests pass (`python -m pytest`). Pieces
 could not be fully verified or completed without things I do not have. Nothing
 was faked: every failure below is logged to the `scrapes` table with a clear
 error message. Phase two has **not** been started.
 
-## 1. SF Fed card spending: no FRED series ID found (needs a decision)
+## 1. SF Fed card spending: dropped (resolved)
 
-**Problem.** The spec says to get the "SF Fed card spending index via the FRED
-API". I could not find any such series.
+No FRED series for an SF Fed card spending index exists (searches of FRED and the
+San Francisco Fed found none; a guessed ID was rejected by FRED; the paper cited in
+the spec is a Federal Reserve **Board** working paper with no published FRED
+series). Decision: the card spending source was deleted from the code, config,
+tests and app instead of staying as a permanently failing stub. The paper remains
+cited in the README as methodological backing for the retail-sales proxy only.
 
-**What I tried**
-* Searched FRED's site for "SF Fed card spending", "frbsf card", "card spending
-  index", "credit card spending", "consumer spending tracker" and the San
-  Francisco Fed as a source: no card spending series came back (only unrelated
-  series such as credit card delinquency rates and the San Francisco Tech
-  Pulse).
-* Requested a guessed ID (`SF_FED_CARD_SPENDING_INDEX`, which a web search tool
-  suggested) from FRED: it does not exist (the search tool's answer looks
-  fabricated).
-* Web searches: the San Francisco Fed does not appear to publish a standalone
-  card spending index data release. The paper cited in the spec is from the
-  Federal Reserve **Board** (FEDS), not the SF Fed, and I found no sign that
-  its county-level Y-14M dataset is published as a FRED series.
+## 2. FRED targets: resolved
 
-**What the code does now.** `python -m src.ingest.fred` runs the card spending
-pipeline against `config.CARD_SPENDING_SERIES_ID` (or the env var of the same
-name). It is unset, so the run is logged as `failed` with a message pointing
-here. No ID is guessed. The pipeline itself is unit-tested with a fake FRED
-client.
-
-**Options (please choose)**
-1. You give me the intended series ID or another source for it.
-2. Use the Visa Spending Momentum Index on FRED (`VISASMIHSA`, headline,
-   monthly, national; exists and is current to Sept 2026). It is not an SF Fed
-   series and has its own terms, so I did not substitute it without approval.
-3. Drop the card spending cross-check.
-
-## 2. FRED targets: no API key, so the fredapi path is untested with real data
-
-**Problem.** No `FRED_API_KEY` is available in this environment.
-
-**What I did.** Confirmed the target series exist and are current using FRED's
-public CSV download (no key): `CAUR`, `TXUR`, `DCUR` (state unemployment),
-`UNRATE`, `RSAFS`. Ran `python -m src.ingest.fred` with no key (logged failure
-"FRED_API_KEY is not set") and with a made-up key (logged failure "FRED
-rejected the API key", reproduced against the live FRED API). Unit tests use a
-fake client. **Not verified:** a real `fredapi` download and write into
-`signals`.
-
-**To unblock.** Export a free `FRED_API_KEY` and run
-`python -m src.ingest.fred`.
+A real `FRED_API_KEY` was provided; the real ingest, build and model runs are
+described in "Real FRED run: October 2025 gap" below.
 
 ## 3. VIIRS via Earth Engine: no credentials, so nothing run live
 
@@ -158,33 +125,22 @@ and run `python -m src.ingest.viirs`.
 
 ## Phase four notes
 
-* **FRED_API_KEY was not available in this environment** (the variable was not
-  set when phase four was built; its value was never read or printed). So the
-  real FRED ingest and the **unemployment target were not run**; only the
-  retail-sales target (Census MSRS, real data, no key needed) was modelled.
-  Unemployment is reported as "no data in the feature table", not faked. The
-  code path is the same for both targets and is unit-tested with synthetic
-  tables only. **To unblock:** export `FRED_API_KEY`, then run
-  `python -m src.ingest.fred`, `python -m src.process.build_signals`,
-  `python -m src.features.build_features` and `python -m src.models.run_models`
-  (the unemployment train/test split is defined and frozen on the first build).
 * **Revision look-ahead is still open** (phase three note above). FRED
   vintages (`get_series_first_release` / `get_series_as_of_date`) would fix it
-  for unemployment but cannot be tested without a key. MSRS vintages are not
-  stored at all.
+  for unemployment but were not used. MSRS vintages are not stored at all.
 * **Rerun after the phase-three revision.** With the 2022+ training window and
   target-own lags, ridge and the tree edge out naive on the six test months
   (details and caveats in the README); the first run (all history, no own lags)
   had no model near naive. `MODEL_MAX_MISSING_SHARE` was lowered from 0.5 to 0.1
   because the sparse MSRS subsectors (448, 451, 452) left only 27 of 48 complete
   training rows. The naive rules, the 10% margin and the gradient-boosting gate
-  are unchanged. FRED_API_KEY was checked again and was still not set.
+  are unchanged.
 
 ## Real FRED run: October 2025 gap (resolved by the one-gap z-score rule)
 
 **Resolved:** item 2 above. With a real key, `python -m src.ingest.fred` logged
 `fred_targets` = `success` (1,970 rows: `CAUR`, `UNRATE`, `RSAFS`; the key was never
-printed or stored); `fred_card` is still `failed`/skipped (item 1). `build_signals`
+printed or stored). `build_signals`
 and `build_features` then built the unemployment target (state series `CAUR`,
 national fallback not needed): 50 train, 6 test (2026-04 to 2026-09), 552
 pre_window and 2 unlabeled rows.
@@ -236,6 +192,40 @@ untouched. Results: README, "Current results".
 Also open: **revision look-ahead.** FRED returns the latest vintage; first-release
 or as-of-date vintages (`get_series_first_release` / `get_series_as_of_date`) would
 remove it but were not used. All scores are somewhat optimistic for that reason.
+
+## Phase five notes
+
+* **Not deployed.** No Streamlit Community Cloud account or GitHub-linked
+  deployment was available here, so the app was run locally
+  (`streamlit run app/streamlit_app.py`), smoke-tested with Streamlit's `AppTest`,
+  and checked in a bare environment holding only `app/requirements.txt`, but the
+  hosted deployment itself is untested. The README's live-demo link is a
+  placeholder. **To unblock:** create the app on share.streamlit.io (main file
+  `app/streamlit_app.py`, Python 3.12) and put its URL in the README. One thing to
+  verify on first deploy: that Community Cloud picks `app/requirements.txt` (next
+  to the entry point) rather than the root file; if it picks the root file the app
+  still works, only the install is slower.
+* **The demo database holds MSRS (California), the real FRED official series
+  and the phase-four results of both targets** (naive benchmarks, ridge, tree),
+  refreshed after the real FRED run and the one-gap z-score rule. VIIRS (Earth
+  Engine) is still blocked, and Indeed has
+  too little history for a z-score and is deliberately never exported to the
+  public demo (scraped data, non-commercial use only). The app shows each of these
+  as "No data yet" with the reason; nothing is faked. Cross-source divergences still
+  cannot be assessed (the official FRED targets are not compared as signals); only
+  subsector-versus-total divergences within retail (MSRS) are shown.
+* **Scoreboard months.** Phase four scores every model on the months all of them
+  could forecast, so retail is scored on 4 of its 6 test months (two have a
+  feature window touching the missing October 2025 release). The app's "Test
+  months" column shows that common number and a note says so.
+* **Manual refresh.** The demo snapshot is rebuilt by hand with
+  `python -m src.export_demo` and committed; nothing refreshes it automatically.
+  It is a binary SQLite file in git, so each refresh adds about its size (~250 KB)
+  to the history.
+* **Decision to review: the app's trend and divergence thresholds** (3-month
+  windows, 0.25 standard deviations for a trend, 0.5 for a divergence, 2.0 for
+  "strong") are my choices, set in `config.py` before looking at any divergence
+  output; they are not estimated from data.
 
 ## Decisions to review (not blockers)
 

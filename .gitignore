@@ -12,3 +12,6 @@ data/raw/*
 !data/raw/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+
+# Streamlit secrets (the app needs none; never commit them)
+.streamlit/secrets.toml

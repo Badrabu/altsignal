@@ -1,6 +1,6 @@
 # Blockers
 
-_Status after the real FRED run: FRED works (item 2 below is resolved), but the October 2025 BLS gap leaves no model fittable or scorable for either target; **a decision is needed** (new section "Real FRED run: October 2025 gap" below). Items 1 and 3 are unchanged._
+_Status after the real FRED run and the one-gap z-score rule: FRED works (item 2 below is resolved) and models run for both targets (section "Real FRED run: October 2025 gap" below). Items 1 and 3 are unchanged._
 
 # Phase one blockers
 
@@ -180,7 +180,7 @@ and run `python -m src.ingest.viirs`.
   training rows. The naive rules, the 10% margin and the gradient-boosting gate
   are unchanged. FRED_API_KEY was checked again and was still not set.
 
-## Real FRED run: October 2025 gap leaves no model fittable (decision needed)
+## Real FRED run: October 2025 gap (resolved by the one-gap z-score rule)
 
 **Resolved:** item 2 above. With a real key, `python -m src.ingest.fred` logged
 `fred_targets` = `success` (1,970 rows: `CAUR`, `UNRATE`, `RSAFS`; the key was never
@@ -211,18 +211,27 @@ boosting gate and the frozen split are untouched. Naive test scores: unemploymen
 LOCF MAE 0.033 / RMSE 0.058, seasonal 0.300 / 0.321; retail LOCF 1.57 / 2.18,
 seasonal 2.65 / 3.25.
 
-**Options (please choose)**
-1. Let a z-score baseline tolerate one missing month (e.g. at least 11 of the
-   previous 12 observed; nothing imputed). Changes the pre-committed phase-two rule
-   for every source and reruns all phases; lag/rolling windows touching October
-   2025 stay empty for up to six months, so about one test month per target may
-   still be unscorable.
-2. Build the models from features that do not depend on FRED z-scores (the
-   target's own raw history and MSRS only), which also restores the old retail
-   result. Unemployment would then rest on its own lags alone.
-3. Keep the rules and report naive-only results (current state).
+**Decision taken (by the user): option 1, tolerate one missing month in a z-score
+baseline** (`config.BASELINE_MIN_PERIODS`, phase-two rule, documented in the README
+and the phase two notes; two missing months still give no z-score; nothing is
+imputed). The full chain was then rerun on a fresh database with real data.
 
-**Bug fixed (exposed by the real data):** `run_models` crashed printing the report when a target had no scorable test month (empty scores are now shown as `n/a`; test added). No other code or setting was changed.
+**What the rule did not fix, and the disclosed setting change.** Lag, change and
+rolling windows that touch October 2025 stay empty for up to six months, and the
+rule also gives z-scores to sparse MSRS subsectors. With `MODEL_MAX_MISSING_SHARE`
+= 0.1 only 43 (retail) and 40 (unemployment) training rows were complete, below the
+48 the CV needs, so no model was fitted. `MODEL_MAX_MISSING_SHARE` was therefore
+set to 0.0 (only columns with no missing training value): 0.0 is the only value
+that keeps all 48 (retail) and all 50 (unemployment) training rows complete, chosen
+from training-window missingness alone before any model was fitted on this data.
+Side effects: unemployment models use 103 columns that are mostly MSRS and national
+retail-sales features, with almost all FRED unemployment features dropped; and two
+retail test months (Jan, Feb 2026) cannot be forecast by any model (a feature
+window touches the hole), so retail is scored on four months (Mar-Jun 2026).
+Naive benchmarks, the 10% margin, the boosting gate and the frozen test split are
+untouched. Results: README, "Current results".
+
+**Bug fixed (exposed by the real data):** `run_models` crashed printing the report when a target had no scorable test month (empty scores are now shown as `n/a`; test added). Also fixed: `run_models` left stale model and forecast rows from earlier runs (for example ridge rows after a rerun in which ridge was no longer fitted); a rerun now replaces the target's stored models and forecasts (`db.delete_models`; tests added).
 
 Also open: **revision look-ahead.** FRED returns the latest vintage; first-release
 or as-of-date vintages (`get_series_first_release` / `get_series_as_of_date`) would

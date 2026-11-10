@@ -19,6 +19,13 @@ def no_train_start(monkeypatch):
     monkeypatch.setattr(config, "TRAIN_START", None)
 
 
+@pytest.fixture(autouse=True)
+def tolerant_column_selection(monkeypatch):
+    """The synthetic tables have 3 warm-up rows with every feature empty, so the mechanics
+    tests allow some missing values per column; the real default (0.0) has its own test."""
+    monkeypatch.setattr(config, "MODEL_MAX_MISSING_SHARE", 0.1)
+
+
 def make_table(n=60, signal=True, seed=0, lag_days=40, unlabeled=2):
     """Build a synthetic feature table for one target ("retail_sales") with 4 features.
 
@@ -307,3 +314,15 @@ def test_rerun_drops_forecast_months_no_longer_produced():
     report["_predictions"]["ridge"] = report["_predictions"]["ridge"].drop(last)
     rm.store_results(report, "CA")
     assert len(db.read_forecasts("CA_retail_sales_ridge")) == 7
+
+
+def test_default_column_rule_uses_only_columns_complete_in_training(monkeypatch):
+    """With the real default (0.0) a column with any missing training value is not used."""
+    monkeypatch.setattr(config, "MODEL_MAX_MISSING_SHARE", 0.0)
+    table, b = make_table(n=70)
+    table["target_hist__last"] = 1.0                       # complete column (constant: dropped later as unusable)
+    table.loc[table.index[10], "f4"] = np.nan              # one hole in the training window
+    table.loc[table.index[:3], ["f1", "f2", "f3"]] = 0.5   # warm-up rows filled so only f4 has a hole
+    train, dropped = train_for(table, b)
+    assert "f4" not in train.features.columns and {"f1", "f2", "f3"} <= set(train.features.columns)
+    assert dropped >= 1

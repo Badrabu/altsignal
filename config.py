@@ -600,7 +600,17 @@ GRADIENT_BOOSTING_REQUIRES_RIDGE_CV_BEATS_NAIVE = True
 # suppressed months. Any share up to 0.2 keeps the same 98 complete columns and
 # all 48 rows, so 0.1 was chosen from training-window missingness alone, before
 # any model was fitted on the new window.
-MODEL_MAX_MISSING_SHARE = 0.1
+# Changed again to 0.0 (only columns complete in every training row) after the
+# real FRED data and the one-gap z-score rule (BASELINE_MIN_PERIODS) arrived. The
+# BLS has no October 2025 release, and every lag/change/rolling window that
+# touches that month is empty, as are the z-scores of sparse MSRS subsectors that
+# now exist. At 0.1 only 43 (retail) and 40 (unemployment) training rows were
+# complete, below the 48 the CV needs; at any value from 0.02 to 0.1 unemployment
+# had 40-43 complete rows. 0.0 is the only value that keeps all 48 (retail) and
+# all 50 (unemployment) training rows complete, so it follows the same rule as
+# before (the loosest setting that keeps every training row), chosen from
+# training-window missingness alone before any model was fitted on this data.
+MODEL_MAX_MISSING_SHARE = 0.0
 # Cross-validation INSIDE the training window: expanding window, this many
 # folds, each validating on this many months. A gap (derived from the target's
 # release lag) keeps labels that were not yet public out of the training part.

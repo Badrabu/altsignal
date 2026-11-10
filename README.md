@@ -8,9 +8,13 @@ postings, and satellite nighttime lights. The full specification is in
 **Status: phases one (ingestion), two (cleaning, alignment, final signals
 table), three (feature engineering) and four (models and benchmarks) are built.**
 The Streamlit app and the final write-up come in later phases. **Headline result of
-phase four: on a six-month test window the tree and ridge edge out naive, but
-only weakly and not convincingly, and not by the pre-set margin for ridge** (see
-[Phase four: models and results](#phase-four-models-and-results)). Open blockers are listed in [`blockers.md`](blockers.md).
+phase four: with real FRED data in the database, no ridge, tree or boosting model
+can be fitted or scored for either target, so only the naive benchmarks have test
+scores.** The cause is a gap in the official data, not the models (see
+[Phase four: models and results](#phase-four-models-and-results)); the earlier
+retail-sales result, where the tree and ridge edged out naive only weakly, was
+obtained before FRED data existed and is kept below for the record. Open blockers
+are listed in [`blockers.md`](blockers.md).
 
 ## Choosing the state
 
@@ -267,7 +271,7 @@ database rows (`models` is unique on model id + metric, `forecasts` on model id
   to be nowcast (`actual_value` empty); `error` = actual - predicted. Model ids
   look like `CA_retail_sales_ridge`, `CA_retail_sales_naive_locf`.
 
-### Results (California, retail sales; test window Jan-Jun 2026)
+### Results without FRED data (California, retail sales; test window Jan-Jun 2026)
 
 **These are the post-fix results.** The first run of phase four (fitted on all
 history from Oct 2020, no target-own lags) found no model close to naive: ridge
@@ -280,8 +284,8 @@ touched. The frozen test window is unchanged.
 
 Target: the Census MSRS total retail year-over-year % change (`msrs_yoy_TOTAL`).
 Features: the MSRS subsector series (z-scores and lags) plus the target's own
-published history (`target_hist__*`); no Indeed, VIIRS or FRED data exists in
-this database yet. Training: Jan 2022-Dec 2025, 48 months, all complete, 98
+published history (`target_hist__*`); no Indeed, VIIRS or FRED data existed in
+the database for this run. Training: Jan 2022-Dec 2025, 48 months, all complete, 98
 columns (the three sparse subsectors 448, 451 and 452 are dropped because
 Census suppresses some of their months).
 
@@ -346,14 +350,74 @@ Caveats:
 * Job postings and nighttime lights are not in these results: there is not yet
   enough Indeed history for z-scores and VIIRS needs Earth Engine access.
 
-### Unemployment target: not run yet
+### Real FRED data (unemployment target) and what changed
 
-State unemployment (national `UNRATE` as the fallback) needs FRED data, and no
-`FRED_API_KEY` was available when phase four was built. Nothing was faked: the
-command reports `target unemployment: no data in the feature table`. With a key,
-run `python -m src.ingest.fred`, `build_signals`, `build_features` and
-`run_models`; the same code and rules then apply to unemployment. See
-`blockers.md`.
+The real FRED ingest has now been run for California (`CAUR`, plus `UNRATE` and
+`RSAFS`; the `fred_targets` scrape logged `success`, 1,970 rows; the optional
+card spending source is still skipped because no series ID exists, see
+`blockers.md`). Series values come from the latest vintage, so they carry
+**revision look-ahead**: the unemployment and retail-sales numbers are what FRED
+shows today, not what was known on each prediction date. Every score below is
+somewhat optimistic for any model for that reason (benchmarks included).
+
+**The unemployment target** is the California unemployment rate in percent
+(`CAUR`, the level, not a year-over-year change); the national `UNRATE` fallback
+was not needed. Frozen test window: Apr-Sep 2026 (the 6 latest observed months;
+2026-10 is not published yet). Training window: Jan 2022 to Mar 2026, 50 labelled
+months (October 2025 has no label, see below).
+
+**Why no model could run.** The BLS did not publish unemployment rates for
+October 2025 (no household survey was collected during the US government
+shutdown), so `CAUR` and `UNRATE` both have a hole at 2025-10. Two pre-committed
+rules turn that hole into a long outage:
+
+1. A z-score needs a complete 12-month baseline, so every FRED z-score is empty
+   from Nov 2025 to Oct 2026. All lagged, change and rolling features are built
+   from those z-scores, so **every FRED-derived feature is empty in every test
+   month of both targets** (the target's own raw history, `target_hist__*`, is
+   the only unemployment information left).
+2. A training row with any missing feature is dropped (no imputation). Only 45
+   of the 50 unemployment rows, and 46 of the 48 retail rows, stay complete,
+   below the 48 rows that five 6-month CV folds need (`MODEL_CV_FOLDS`,
+   `MODEL_MIN_TRAIN_ROWS_FIRST_FOLD`), so `run_models` reports
+   `models not fitted: only 45 complete training rows; need at least 48`.
+
+The same hole also removes the retail-sales models that existed before: once the
+FRED columns are in the table, retail has 46 complete rows instead of 48. A
+trial with the row floor lowered fitted the models but no test month had every
+feature (point 1), so nothing could be scored; that trial was reverted and no
+setting was changed. Dropping the FRED features, or letting a z-score baseline
+tolerate one missing month, would change pre-committed rules and needs a
+decision (see `blockers.md`).
+
+### Results with real data (test set, frozen, six months each)
+
+Units: percentage points for the unemployment rate (level) and percentage
+points of year-over-year growth for retail sales. All rows are scored on the
+same six months.
+
+| Target | Model | MAE | RMSE |
+| --- | --- | --- | --- |
+| Unemployment, CA (`CAUR`), Apr-Sep 2026 | Naive: last observation carried forward | **0.033** | **0.058** |
+| | Naive: seasonal (value 12 months earlier) | 0.300 | 0.321 |
+| | Ridge | not fitted | not fitted |
+| | Decision tree | not fitted | not fitted |
+| | Gradient boosting | not run | not run |
+| Retail sales, CA (MSRS total), Jan-Jun 2026 | Naive: last observation carried forward | 1.57 | 2.18 |
+| | Naive: seasonal | 2.65 | 3.25 |
+| | Ridge, tree, gradient boosting | not fitted | not fitted |
+
+**Reading.** For unemployment the naive carry-forward is hard to beat by
+construction: the California rate moves 0.0 to 0.1 points a month, so last
+month's published value (LOCF uses the latest value public at the prediction
+date, one month old here) was off by 0.1 in two of six months and exact in four.
+The seasonal naive is much worse (0.30 MAE) because the rate fell by about 0.4
+points year over year in the later test months. No claim of skill can be made for any model on this
+target, since none could be scored. The retail-sales ridge and tree results
+above (MAE 1.52 / 1.08, RMSE 1.78 / 1.31) were produced before FRED data was in
+the database and still reproduce exactly on a database with only the MSRS data;
+they are not in the current stored results, and carry all the caveats listed
+there.
 
 ## What is stored
 

@@ -271,7 +271,9 @@ def format_report(report: dict) -> str:
              f"  {'model':16s} {'MAE':>9s} {'RMSE':>9s}  notes"]
     for name, m in report["models"].items():
         extra = f"params {m['params']}, CV RMSE {m['cv_rmse']:.3f}" if "params" in m else ""
-        lines.append(f"  {name:16s} {m['MAE']:9.3f} {m['RMSE']:9.3f}  {extra}")
+        mae_text = f"{m['MAE']:9.3f}" if m["MAE"] is not None else f"{'n/a':>9s}"
+        rmse_text = f"{m['RMSE']:9.3f}" if m["RMSE"] is not None else f"{'n/a':>9s}"
+        lines.append(f"  {name:16s} {mae_text} {rmse_text}  {extra}")
     v = report["verdict"]
     if "best_naive" in v:
         for name, d in v["models"].items():

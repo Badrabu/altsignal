@@ -265,3 +265,12 @@ def test_main_without_a_feature_table_fails_cleanly(capsys):
     """A missing feature table gives a clear message and exit code 1."""
     assert rm.main([]) == 1
     assert "build_features" in capsys.readouterr().out
+
+
+def test_format_report_handles_unscored_models():
+    """A model with no scorable test month prints n/a instead of crashing the report."""
+    report = {"test_start": "2026-01-01", "test_end": "2026-06-01", "test_months_scored": 0,
+              "test_months_total": 6, "notes": [], "verdict": {"any_model_meaningfully_beats_naive": False},
+              "models": {"naive_locf": {"kind": "naive", "MAE": None, "RMSE": None}}}
+    text = rm.format_report(report)
+    assert "n/a" in text and "0 of 6 months scored" in text

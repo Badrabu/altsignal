@@ -11,8 +11,11 @@ How this module enforces that
   let earlier "test" months leak into training). Use ``--refreeze-split`` to
   define a new one on purpose.
 * Every row gets a ``split`` label: ``train``, ``test``, ``later`` (target
-  observed after the frozen test window), ``unlabeled`` (target not published
-  yet or missing).
+  observed after the frozen test window), ``pre_window`` (target observed but
+  before ``config.TRAIN_START``, so excluded from fitting; the row is kept, not
+  deleted), ``unlabeled`` (target not published yet or missing).
+* ``config.TRAIN_START`` only narrows the TRAINING window from the left. It
+  never touches the test window, which stays the frozen last six months.
 * Anything that LEARNS from data (scaling, feature selection, and in phase four
   the models) must take a ``TrainSet``. A ``TrainSet`` can only be built from
   rows labelled ``train`` and refuses a table that contains any test-period
@@ -34,9 +37,28 @@ import config
 
 # Columns that describe a row; every other column is a feature.
 META_COLUMNS = ["target_name", "target_series", "target_month", "as_of",
-                "target_available", "split", "target_value"]
+                "target_available", "pandemic_regime", "split", "target_value"]
 
 SPLIT_TRAIN, SPLIT_TEST, SPLIT_LATER, SPLIT_UNLABELED = "train", "test", "later", "unlabeled"
+SPLIT_PRE_WINDOW = "pre_window"
+
+# Default for ``train_start`` arguments: read ``config.TRAIN_START`` when called.
+FROM_CONFIG = "from_config"
+
+
+def train_start_of(train_start=FROM_CONFIG) -> pd.Timestamp | None:
+    """Resolve the first month allowed in training.
+
+    Args:
+        train_start: ``FROM_CONFIG`` (read ``config.TRAIN_START``), ``None``
+            (no restriction) or a date-like value.
+
+    Returns:
+        A ``Timestamp``, or ``None`` when training may use all history.
+    """
+    if isinstance(train_start, str) and train_start == FROM_CONFIG:
+        train_start = config.TRAIN_START
+    return None if train_start is None else pd.Timestamp(train_start)
 
 
 class SplitError(Exception):
@@ -106,13 +128,16 @@ def save_frozen(state_abbr: str, boundaries: dict[str, SplitBoundary]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def define_boundary(target_name: str, target_series: str, observed_months: pd.DatetimeIndex) -> SplitBoundary:
+def define_boundary(target_name: str, target_series: str, observed_months: pd.DatetimeIndex,
+                    train_start=FROM_CONFIG) -> SplitBoundary:
     """Define a new boundary: the last ``TEST_MONTHS`` calendar months with data.
 
     Args:
         target_name: e.g. "retail_sales".
         target_series: Signal id of the target.
         observed_months: Months in which the target has a value.
+        train_start: First month allowed in training (see ``train_start_of``);
+            only months from there to the test window count toward the minimum.
 
     Returns:
         The new ``SplitBoundary``.
@@ -126,9 +151,12 @@ def define_boundary(target_name: str, target_series: str, observed_months: pd.Da
         raise SplitError(f"{target_name}: the target has no observed months")
     test_end = months.max()
     test_start = test_end - pd.DateOffset(months=config.TEST_MONTHS - 1)
-    n_train = int((months < test_start).sum())
+    start = train_start_of(train_start)
+    in_window = (months < test_start) if start is None else ((months >= start) & (months < test_start))
+    n_train = int(in_window.sum())
     if n_train < config.MIN_TRAIN_MONTHS:
-        raise SplitError(f"{target_name}: only {n_train} labelled months before the test window; "
+        since = "" if start is None else f" since {start:%Y-%m}"
+        raise SplitError(f"{target_name}: only {n_train} labelled months{since} before the test window; "
                          f"need at least {config.MIN_TRAIN_MONTHS}")
     return SplitBoundary(target_name, target_series, test_start, test_end)
 
@@ -139,6 +167,7 @@ def resolve_boundary(
     observed_months: pd.DatetimeIndex,
     frozen: dict[str, SplitBoundary],
     refreeze: bool = False,
+    train_start=FROM_CONFIG,
 ) -> SplitBoundary:
     """Return the frozen boundary, or define (and return) a new one.
 
@@ -148,6 +177,7 @@ def resolve_boundary(
         observed_months: Months in which the target has a value.
         frozen: Boundaries already frozen (``load_frozen``).
         refreeze: Define a new boundary even if one is frozen.
+        train_start: First month allowed in training (only used to define a new boundary).
 
     Returns:
         The boundary to use.
@@ -164,16 +194,20 @@ def resolve_boundary(
                              f"but the target is now {target_series}. Re-run with --refreeze-split "
                              "if this change is intended.")
         return existing
-    return define_boundary(target_name, target_series, observed_months)
+    return define_boundary(target_name, target_series, observed_months, train_start)
 
 
-def assign_split(target_month: pd.Timestamp, has_target: bool, boundary: SplitBoundary) -> str:
-    """Label one row as train, test, later or unlabeled.
+def assign_split(target_month: pd.Timestamp, has_target: bool, boundary: SplitBoundary,
+                 train_start=None) -> str:
+    """Label one row as train, pre_window, test, later or unlabeled.
 
     Args:
         target_month: The month being nowcast.
         has_target: Whether the target value is observed.
         boundary: The frozen boundary.
+        train_start: First month allowed in training (``None`` = no restriction;
+            pass ``config.TRAIN_START`` to apply the configured window). It
+            cannot affect the test window.
 
     Returns:
         One of the ``SPLIT_*`` labels.
@@ -181,6 +215,9 @@ def assign_split(target_month: pd.Timestamp, has_target: bool, boundary: SplitBo
     if not has_target:
         return SPLIT_UNLABELED
     if target_month < boundary.test_start:
+        start = train_start_of(train_start)
+        if start is not None and target_month < start:
+            return SPLIT_PRE_WINDOW
         return SPLIT_TRAIN
     if target_month <= boundary.test_end:
         return SPLIT_TEST
@@ -207,12 +244,14 @@ class TrainSet:
     package (and the phase-four models) accept only this type.
     """
 
-    def __init__(self, table: pd.DataFrame, boundary: SplitBoundary):
+    def __init__(self, table: pd.DataFrame, boundary: SplitBoundary, train_start=FROM_CONFIG):
         """Validate and store the training rows of one target.
 
         Args:
             table: Feature table rows for ONE target.
             boundary: That target's frozen boundary.
+            train_start: First month allowed in training (default
+                ``config.TRAIN_START``; ``None`` = no restriction).
 
         Raises:
             SplitError: If any row is not a clean training row.
@@ -222,6 +261,9 @@ class TrainSet:
             raise SplitError("TrainSet: rows from a different target")
         if (months >= boundary.test_start).any():
             raise SplitError("TrainSet: the table contains test-period or later months")
+        start = train_start_of(train_start)
+        if start is not None and (months < start).any():
+            raise SplitError(f"TrainSet: the table contains months before the training start {start:%Y-%m}")
         if (table["split"] != SPLIT_TRAIN).any():
             raise SplitError("TrainSet: every row must be labelled 'train'")
         if table["target_value"].isna().any():
@@ -257,19 +299,24 @@ class TrainSet:
         return self._table["target_value"].copy()
 
 
-def make_train_set(table: pd.DataFrame, target_name: str, boundary: SplitBoundary) -> TrainSet:
+def make_train_set(table: pd.DataFrame, target_name: str, boundary: SplitBoundary,
+                   train_start=FROM_CONFIG) -> TrainSet:
     """Pick one target's training rows from a feature table.
 
     Args:
         table: The full feature table (all targets, all splits).
         target_name: Which target.
         boundary: That target's frozen boundary.
+        train_start: First month allowed in training (default ``config.TRAIN_START``).
 
     Returns:
         A ``TrainSet`` with the rows labelled ``train`` and an observed target.
     """
+    start = train_start_of(train_start)
     rows = table[(table["target_name"] == target_name) & (table["split"] == SPLIT_TRAIN)]
-    return TrainSet(rows, boundary)
+    if start is not None:
+        rows = rows[pd.to_datetime(rows["target_month"]) >= start]
+    return TrainSet(rows, boundary, train_start)
 
 
 def open_test_set(table: pd.DataFrame, target_name: str) -> pd.DataFrame:

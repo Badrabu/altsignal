@@ -14,6 +14,10 @@ everything derived from P* looks backwards from P*:
     <series>__roll3/6_std    rolling standard deviation over the same window
     <series>__coverage_pct   (VIIRS only) share of well-covered pixels x 100
 
+Each TARGET also gets its own published history, in the target's own units
+(``target_hist__last`` and so on, see ``derive_target_history``): its latest
+published raw value and earlier ones, built with the target's own release lag.
+
 Rules:
 * No look-ahead. Nothing after P* is touched, and P* is chosen by release date,
   not by the calendar (so MSRS, published ~3.5 months late, enters with that
@@ -133,6 +137,37 @@ def derive_series_features(z: pd.Series, coverage_pct: pd.Series | None = None) 
     return pd.DataFrame(columns)
 
 
+def derive_target_history(values: pd.Series) -> pd.DataFrame:
+    """Compute the target's own raw-value history, for use at its latest published period.
+
+    Values are in the target's own units (for example percent year-over-year),
+    the same units as the label, so a model can learn "the next value is close
+    to the last one published" and how that last value has been moving. Every
+    value at period P uses only periods up to P, and gaps stay NaN.
+
+    Columns: ``last`` (value at P), ``lag1/2/3`` (earlier values), ``chg1/3``
+    (change over 1/3 months), ``chg1_lag1`` (the previous month's one-month
+    change, i.e. a lagged change) and ``roll3_mean`` (mean of the last 3 months,
+    needs all three).
+
+    Args:
+        values: Raw target values indexed by month start (months may be absent).
+
+    Returns:
+        A DataFrame on a complete monthly calendar.
+    """
+    calendar = pd.date_range(values.index.min(), values.index.max(), freq="MS")
+    raw = values.reindex(calendar)
+    columns = {"last": raw}
+    for k in config.FEATURE_LAGS:
+        columns[f"lag{k}"] = raw.shift(k)
+    for k in config.FEATURE_CHANGES:
+        columns[f"chg{k}"] = raw - raw.shift(k)
+    columns["chg1_lag1"] = raw.shift(1) - raw.shift(2)
+    columns["roll3_mean"] = raw.rolling(window=3, min_periods=3).mean()
+    return pd.DataFrame(columns)
+
+
 def series_name(signal_id: str, geo_level: str) -> str:
     """Build the column prefix of a series.
 
@@ -247,22 +282,25 @@ def build_feature_table(
             build.targets[target_name] = "no data"
             continue
         try:
-            boundary = splitting.resolve_boundary(target_name, sid, observed.index, frozen, refreeze)
+            boundary = splitting.resolve_boundary(target_name, sid, observed.index, frozen, refreeze,
+                                                  config.TRAIN_START)
         except splitting.SplitError as exc:
             build.targets[target_name] = f"error: {exc}"
             continue
         build.boundaries[target_name] = boundary
 
         months = target_months_range(observed.index.min(), today)
+        history = derive_target_history(values)
         rows = pd.DataFrame({"target_month": months})
         rows.insert(0, "target_name", target_name)
         rows.insert(1, "target_series", sid)
         rows["as_of"] = [as_of(m) for m in months]
         rows["target_available"] = [month_end(m) + pd.Timedelta(days=lag_days) for m in months]
+        rows["pandemic_regime"] = [int(in_pandemic_regime(m)) for m in months]
         rows["target_value"] = values.reindex(months).to_numpy()
-        rows["split"] = [splitting.assign_split(m, pd.notna(v), boundary)
+        rows["split"] = [splitting.assign_split(m, pd.notna(v), boundary, config.TRAIN_START)
                          for m, v in zip(months, rows["target_value"])]
-        tables.append(_attach_features(rows, per_series))
+        tables.append(_attach_features(rows, per_series, (history, lag_days)))
         build.targets[target_name] = f"built: {sid}"
 
     if tables:
@@ -297,12 +335,28 @@ def _pick_target(usable: pd.DataFrame, signals: pd.DataFrame, candidates: list[t
     return None
 
 
-def _attach_features(rows: pd.DataFrame, per_series: dict[str, tuple[pd.DataFrame, int]]) -> pd.DataFrame:
+def in_pandemic_regime(month: pd.Timestamp) -> bool:
+    """Say whether a target month falls in ``config.PANDEMIC_REGIME``.
+
+    Args:
+        month: First day of the month.
+
+    Returns:
+        ``True`` if the month is inside the configured range (inclusive).
+    """
+    first, last = (pd.Timestamp(d) for d in config.PANDEMIC_REGIME)
+    return first <= month <= last
+
+
+def _attach_features(rows: pd.DataFrame, per_series: dict[str, tuple[pd.DataFrame, int]],
+                     own_history: tuple[pd.DataFrame, int] | None = None) -> pd.DataFrame:
     """Add every series' features, taken at its latest published period P*.
 
     Args:
         rows: Meta columns, one row per target month.
         per_series: ``{series name: (feature frame, release lag)}``.
+        own_history: ``(target history frame, target release lag)``; added with
+            the ``target_hist`` prefix, also taken at the target's own P*.
 
     Returns:
         ``rows`` with feature columns appended (gaps are NaN).
@@ -312,6 +366,13 @@ def _attach_features(rows: pd.DataFrame, per_series: dict[str, tuple[pd.DataFram
         periods = [latest_published_period(m, lag_days) for m in rows["target_month"]]
         picked = features.reindex(periods)
         picked.columns = [f"{name}{SEP}{c}" for c in picked.columns]
+        picked.index = rows.index
+        pieces.append(picked)
+    if own_history is not None:
+        history, lag_days = own_history
+        periods = [latest_published_period(m, lag_days) for m in rows["target_month"]]
+        picked = history.reindex(periods)
+        picked.columns = [f"{config.TARGET_HISTORY_PREFIX}{SEP}{c}" for c in picked.columns]
         picked.index = rows.index
         pieces.append(picked)
     return pd.concat(pieces, axis=1)

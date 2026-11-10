@@ -11,6 +11,10 @@ and writes, in ``data/processed/``:
     features_<ST>_meta.json  what was built: lags used, split boundaries, counts
     split_<ST>.json          the FROZEN train/test boundary per target
 
+Each row also carries its own target's published history (``target_hist__*``).
+Training starts at ``config.TRAIN_START``; earlier labelled months are kept but
+labelled ``pre_window``.
+
 Re-running with unchanged inputs rewrites identical files (idempotent), and the
 frozen test window never moves unless ``--refreeze-split`` is given.
 
@@ -78,6 +82,8 @@ def describe(build: engineer.FeatureBuild, info: config.StateInfo, today) -> dic
         "built_for_date": today.isoformat(),
         "prediction_offset_days": config.PREDICTION_OFFSET_DAYS,
         "test_months": config.TEST_MONTHS,
+        "train_start": config.TRAIN_START,
+        "pandemic_regime_months": list(config.PANDEMIC_REGIME),
         "targets": build.targets,
         "split_boundaries": {
             name: {"target_series": b.target_series,

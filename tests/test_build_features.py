@@ -104,3 +104,30 @@ def test_switching_state_uses_its_own_files(monkeypatch):
     monkeypatch.setattr(config, "STATE", "Texas")
     assert bf.main([]) == 0
     assert bf.features_path("TX").exists() and not bf.features_path("CA").exists()
+
+
+def test_target_history_columns_and_training_window_are_in_the_outputs():
+    """The CSV carries target_hist features, the regime flag and pre_window labels; meta records TRAIN_START."""
+    populate()
+    build, description = bf.build_features("California", today=TODAY)
+    table = pd.read_csv(bf.features_path("CA"), parse_dates=["target_month"])
+    assert {"target_hist__last", "target_hist__lag1", "target_hist__chg1", "target_hist__chg1_lag1"} <= set(table.columns)
+    assert "pandemic_regime" in table.columns
+    counts = description["rows_per_target_and_split"]["retail_sales"]
+    assert counts["pre_window"] == 36 and counts["train"] == 48 and counts["test"] == 6   # 2019-21 / 2022-25 / 2026
+    assert description["train_start"] == "2022-01-01"
+    train = sp.make_train_set(table, "retail_sales", sp.load_frozen("CA")["retail_sales"])
+    assert train.frame["target_month"].min() == pd.Timestamp("2022-01-01")
+    assert "target_hist__last" in train.features.columns and "pandemic_regime" not in train.features.columns
+
+
+def test_train_start_change_never_moves_the_frozen_test_window(monkeypatch):
+    """Re-running with another TRAIN_START relabels training rows only."""
+    populate()
+    first, _ = bf.build_features("California", today=TODAY)
+    monkeypatch.setattr(config, "TRAIN_START", "2023-01-01")
+    second, _ = bf.build_features("California", today=TODAY)
+    assert first.boundaries == second.boundaries
+    pd.testing.assert_series_equal(first.table.loc[first.table["split"] == "test", "target_value"],
+                                   second.table.loc[second.table["split"] == "test", "target_value"])
+    assert (second.table["split"] == "train").sum() == 36

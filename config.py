@@ -550,5 +550,26 @@ FEATURE_TARGETS = {
 # Train/test split: the last TEST_MONTHS months with an observed target are the
 # true test set. The boundary is frozen in a file the first time it is defined.
 TEST_MONTHS = 6
-# Refuse to define a split with fewer labelled months than this before the test set.
+# Refuse to define a split with fewer labelled months than this in the
+# training window (TRAIN_START up to the test set).
 MIN_TRAIN_MONTHS = 24
+
+# First target month allowed in the TRAINING set (None = use all history).
+# Months before it keep their rows in the feature table (label "pre_window")
+# but are never fitted on. Nothing is deleted or changed in the signals table.
+# Why 2022-01-01: year-over-year targets such as MSRS swing from about -20% to
+# +80% in 2020-21 purely from the pandemic shock and its base effects (the
+# 2021 comparison month is the 2020 collapse, the 2022 one is stimulus-inflated
+# 2021). Those few extreme months would dominate any fit while describing a
+# regime that is not the one being nowcast. This is a first-principles choice,
+# not tuned on test results; change it here to widen or narrow the window.
+TRAIN_START = "2022-01-01"
+
+# Months flagged by the `pandemic_regime` column of the feature table (inclusive).
+# The flag is informational (a meta column, not a model feature): inside the
+# default training window it is always 0.
+PANDEMIC_REGIME = ("2020-03-01", "2021-12-01")
+
+# Target-own-history features (the target's last PUBLISHED raw values, in the
+# target's own units, built at each target's latest published period).
+TARGET_HISTORY_PREFIX = "target_hist"

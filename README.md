@@ -119,7 +119,7 @@ Scores are features, not filters, and are **not comparable across sources**.
 
 * `features_<ST>.csv`: one row per **target** and **target month**. Meta columns
   (`target_name`, `target_series`, `target_month`, `as_of`, `target_available`,
-  `split`, `target_value`) followed by the features. Missing values are empty
+  `pandemic_regime`, `split`, `target_value`) followed by the features. Missing values are empty
   cells.
 * `features_<ST>_meta.json`: targets built, split boundaries, release lags used,
   row counts per split and the number of non-missing values per feature.
@@ -159,8 +159,19 @@ For each state-level and national series, at its latest published period P*:
 `__z` (the z-score), `__lag1/2/3`, `__chg1/3` (changes), `__roll3/6_mean` and
 `__roll3/6_std` (rolling statistics over the months up to P*). VIIRS also gets
 `__coverage_pct` (share of well-covered pixels x 100). Metro-level series are not
-used yet. Different units are never mixed: only z-scores are used as features,
-and the raw target is kept as the label.
+used yet. Different units are never mixed: z-scores are used for the other
+series, and the raw target is kept as the label.
+
+**The target's own history (`target_hist__*`).** Each row also carries the
+target's own last published raw values, in the same units as the label (for
+example percent year-over-year): `last` (the latest published value), `lag1/2/3`,
+`chg1/3` (changes), `chg1_lag1` (the previous month's change, a lagged change) and
+`roll3_mean`. They follow the target's own release lag exactly like every other
+series: for MSRS, row T holds values up to about T-4 months, never T itself. A
+nowcast that cannot see the last official print is handicapped against a naive
+"repeat the last value" baseline, so this is the information a fair nowcast is
+entitled to. (The z-scored `<target>.state__*` columns also remain.) The tests
+break if the release-lag logic is removed.
 
 **Nothing is imputed.** A feature is empty if its value, or any month in its
 lag, change or rolling window, is missing; an older value is never carried
@@ -168,20 +179,41 @@ forward and a rolling window needs all its months. Early months have no features
 until 12 months of z-score history exist. Downstream code drops or flags those
 rows.
 
+### The training window and the pandemic regime
+
+`config.TRAIN_START` (default `2022-01-01`; `None` = all history) is the first
+target month that may be fitted on. Labelled months before it are **kept** in the
+feature table with `split = pre_window`; nothing is deleted or altered in the
+`signals` table, and they can still be inspected. The default is a
+first-principles choice made before looking at any model result: year-over-year
+targets such as MSRS swing from about -20% to +80% in 2020-21 purely because of
+the pandemic shock and its base effects (the 2021 comparison month is the 2020
+collapse; 2022 compares against stimulus-inflated 2021). A handful of such
+extreme months would dominate any fit while describing a regime that is not the
+one being nowcast. Limits to be aware of: the rolling z-scores of early-2022 rows
+still use 2021 months in their 12-month baseline, and features of the first
+training rows look back into 2021 (they are inputs, not fitted rows). The column
+`pandemic_regime` is 1 for target months in `config.PANDEMIC_REGIME` (default
+2020-03 to 2021-12) so anyone who widens the window can flag or stratify those
+rows; it is a meta column, not a model feature (it is always 0 inside the default
+window). `TRAIN_START` never changes the test window: the frozen boundary is
+reused as is, and `TrainSet` also rejects months before the training start.
+
 ### The test set
 
 The last six months with an observed target are held out as the true test set
 (`config.TEST_MONTHS`), per target. The boundary is **frozen** in
 `split_<ST>.json` the first time it is defined, so new months do not move it
 (they are labelled `later`); `--refreeze-split` defines a new one on purpose. A
-target needs at least 24 labelled months before the test window or no split is
-defined. Row labels in `split`: `train`, `test`, `later`, `unlabeled` (target not
+target needs at least 24 labelled months in the training window (from
+`TRAIN_START`) before the test window, or no split is defined. Row labels in
+`split`: `train`, `pre_window` (before `TRAIN_START`), `test`, `later`, `unlabeled` (target not
 published yet or missing; these are the rows to nowcast).
 
 The feature builder has no fitted steps (no scaling or selection), so the table
 holds unscaled features. Anything that learns from data must take a `TrainSet`
-(`src/features/split.py`): it can only be built from rows labelled `train` before
-the test window and raises on any test-period row, and `fit_standardizer` and
+(`src/features/split.py`): it can only be built from rows labelled `train` (from `TRAIN_START`, before
+the test window) and raises on any test-period row, and `fit_standardizer` and
 `select_columns` reject everything else. The test rows are available only through
 `open_test_set`, as a plain table that those functions do not accept.
 

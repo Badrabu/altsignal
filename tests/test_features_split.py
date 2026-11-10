@@ -8,6 +8,12 @@ import config
 from src.features import split as sp
 
 
+@pytest.fixture(autouse=True)
+def full_history_training(monkeypatch):
+    """These tests exercise the split mechanics on short synthetic tables, so training may start anywhere."""
+    monkeypatch.setattr(config, "TRAIN_START", None)
+
+
 def months(n, start="2019-01-01"):
     """Return ``n`` consecutive month starts."""
     return pd.date_range(start, periods=n, freq="MS")
@@ -19,7 +25,7 @@ def make_table(n=40, target="retail_sales", series="msrs_yoy_TOTAL"):
     boundary = sp.define_boundary(target, series, index)
     rng = np.random.default_rng(0)
     table = pd.DataFrame({"target_name": target, "target_series": series, "target_month": index,
-                          "as_of": index, "target_available": index, "target_value": rng.normal(size=n),
+                          "as_of": index, "target_available": index, "pandemic_regime": 0, "target_value": rng.normal(size=n),
                           "f1": rng.normal(size=n), "f2": rng.normal(size=n)})
     table["split"] = [sp.assign_split(m, True, boundary) for m in index]
     return table, boundary
@@ -161,3 +167,69 @@ def test_open_test_set_returns_only_test_rows():
     test = sp.open_test_set(table, "retail_sales")
     assert len(test) == 6 and set(test["split"]) == {"test"}
     assert not isinstance(test, sp.TrainSet)
+
+
+# ---- configurable training-window start (the pandemic regime) -----------------
+
+def test_train_start_labels_early_months_pre_window_and_leaves_the_test_window_alone(monkeypatch):
+    """Months before TRAIN_START are kept but not train; test months are unaffected."""
+    index = months(60)                                       # 2019-01 .. 2023-12
+    boundary = sp.define_boundary("t", "s", index, train_start="2021-01-01")
+    assert boundary.test_start == pd.Timestamp("2023-07-01")  # same as without a window
+    labels = {m: sp.assign_split(m, True, boundary, "2021-01-01") for m in index}
+    assert labels[pd.Timestamp("2020-12-01")] == "pre_window"
+    assert labels[pd.Timestamp("2021-01-01")] == "train"
+    assert sum(v == "pre_window" for v in labels.values()) == 24
+    assert sum(v == "test" for v in labels.values()) == 6
+    unrestricted = sp.define_boundary("t", "s", index, train_start=None)
+    assert unrestricted == boundary
+
+
+def test_train_start_cannot_move_a_frozen_test_window():
+    """A frozen boundary is reused as is, whatever TRAIN_START says."""
+    frozen = {"t": sp.define_boundary("t", "s", months(60), train_start=None)}
+    again = sp.resolve_boundary("t", "s", months(60), frozen, train_start="2022-06-01")
+    assert again == frozen["t"]
+
+
+def test_train_start_counts_toward_the_minimum_training_months():
+    """Too few months inside the window refuses the split with a clear message."""
+    with pytest.raises(sp.SplitError, match="since 2022-01"):
+        sp.define_boundary("t", "s", months(60), train_start="2022-01-01")     # only 18 in-window months
+    sp.define_boundary("t", "s", months(60), train_start="2021-06-01")        # 24 in-window months
+
+
+def test_train_set_rejects_months_before_train_start():
+    """Even rows mislabelled 'train' cannot enter a TrainSet before the window start."""
+    table, boundary = make_table(60)
+    train_rows = table[table["split"] == "train"]
+    with pytest.raises(sp.SplitError, match="training start 2020-01"):
+        sp.TrainSet(train_rows, boundary, train_start="2020-01-01")
+    ok = sp.TrainSet(train_rows[train_rows["target_month"] >= "2020-01-01"], boundary, train_start="2020-01-01")
+    assert ok.frame["target_month"].min() == pd.Timestamp("2020-01-01")
+
+
+def test_make_train_set_applies_the_configured_start(monkeypatch):
+    """make_train_set reads config.TRAIN_START by default and drops pre-window rows."""
+    monkeypatch.setattr(config, "TRAIN_START", "2020-06-01")
+    table, boundary = make_table(60)
+    train = sp.make_train_set(table, "retail_sales", boundary)
+    assert train.frame["target_month"].min() == pd.Timestamp("2020-06-01")
+    assert train.frame["target_month"].max() < boundary.test_start
+
+
+def test_pre_window_rows_are_not_available_to_fitted_steps(monkeypatch):
+    """Changing pre-window rows cannot change the fitted scaler."""
+    monkeypatch.setattr(config, "TRAIN_START", "2021-01-01")
+    index = months(60)
+    boundary = sp.define_boundary("retail_sales", "msrs_yoy_TOTAL", index)
+    rng = np.random.default_rng(1)
+    table = pd.DataFrame({"target_name": "retail_sales", "target_series": "msrs_yoy_TOTAL",
+                          "target_month": index, "as_of": index, "target_available": index,
+                          "pandemic_regime": 0, "target_value": rng.normal(size=60), "f1": rng.normal(size=60)})
+    table["split"] = [sp.assign_split(m, True, boundary, config.TRAIN_START) for m in index]
+    first = sp.fit_standardizer(sp.make_train_set(table, "retail_sales", boundary))
+    wild = table.copy()
+    wild.loc[wild["split"] == "pre_window", "f1"] = 1e6
+    second = sp.fit_standardizer(sp.make_train_set(wild, "retail_sales", boundary))
+    pd.testing.assert_series_equal(first.mean, second.mean)

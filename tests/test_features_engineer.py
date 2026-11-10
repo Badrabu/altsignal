@@ -102,7 +102,7 @@ def test_both_targets_built_with_meta_columns():
     first = table[table["target_name"] == "retail_sales"].iloc[0]
     assert first["as_of"] == engineer.as_of(first["target_month"])
     assert first["target_available"] == ts("2019-01-31") + pd.Timedelta(days=115)
-    assert set(table["split"]) <= {"train", "test", "later", "unlabeled"}
+    assert set(table["split"]) <= {"train", "pre_window", "test", "later", "unlabeled"}
     assert result.series_used["msrs_yoy_TOTAL.state"] == 115
 
 
@@ -246,3 +246,112 @@ def test_rows_stop_at_the_last_month_whose_prediction_time_has_passed():
     assert months[-1] == ts("2026-10-01")
     assert engineer.target_months_range(ts("2026-08-01"), date(2026, 11, 1))[-1] == ts("2026-10-01")
     assert engineer.target_months_range(ts("2026-08-01"), date(2026, 10, 31))[-1] == ts("2026-09-01")
+
+
+# ---- the target's own published history -----------------------------------------
+
+def hist(result, target, month):
+    """Return the ``target_hist`` features of one row as a dict keyed by suffix."""
+    feats = row_features(result, target, month)
+    prefix = f"{config.TARGET_HISTORY_PREFIX}__"
+    return {k[len(prefix):]: v for k, v in feats.items() if k.startswith(prefix)}
+
+
+def raw_target(signals, signal_id, period):
+    """Raw value of a signal in a month."""
+    rows = signals[(signals["signal_id"] == signal_id) & (signals["period_start"] == ts(period))]
+    return rows["value"].iloc[0]
+
+
+def test_derive_target_history_values_and_gaps():
+    """Last value, lags, changes, lagged change and rolling mean, with gaps kept."""
+    values = pd.Series([1.0, 3.0, 6.0, 10.0, 15.0, 21.0], index=pd.date_range("2025-01-01", periods=6, freq="MS"))
+    f = engineer.derive_target_history(values)
+    t = ts("2025-06-01")
+    assert f.loc[t, "last"] == 21 and f.loc[t, "lag1"] == 15 and f.loc[t, "lag3"] == 6
+    assert f.loc[t, "chg1"] == 6 and f.loc[t, "chg3"] == 15
+    assert f.loc[t, "chg1_lag1"] == 5                         # May - Apr
+    assert f.loc[t, "roll3_mean"] == pytest.approx((10 + 15 + 21) / 3)
+    gap = engineer.derive_target_history(values.drop(ts("2025-04-01")))
+    assert pd.isna(gap.loc[ts("2025-04-01"), "last"])
+    assert pd.isna(gap.loc[ts("2025-05-01"), "lag1"]) and pd.isna(gap.loc[ts("2025-05-01"), "chg1"])
+    assert pd.isna(gap.loc[ts("2025-06-01"), "roll3_mean"])   # nothing is filled
+
+
+def test_target_history_is_the_last_published_value_never_the_months_own():
+    """MSRS (115-day lag) row T=2023-08 holds raw values of 2023-04 and earlier, not of 2023-08."""
+    signals = make_signals()
+    result = build(signals)
+    h = hist(result, "retail_sales", "2023-08-01")
+    assert h["last"] == raw_target(signals, "msrs_yoy_TOTAL", "2023-04-01")
+    assert h["lag1"] == raw_target(signals, "msrs_yoy_TOTAL", "2023-03-01")
+    assert h["lag3"] == raw_target(signals, "msrs_yoy_TOTAL", "2023-01-01")
+    assert h["chg1"] == pytest.approx(h["last"] - h["lag1"])
+    assert h["chg1_lag1"] == pytest.approx(h["lag1"] - raw_target(signals, "msrs_yoy_TOTAL", "2023-02-01"))
+    # Unemployment (30-day lag) uses the previous month.
+    u = hist(result, "unemployment", "2023-08-01")
+    assert u["last"] == raw_target(signals, "fred_unemployment_rate_state", "2023-07-01")
+
+
+def test_target_history_ignores_everything_unpublished_at_prediction_time():
+    """Changing target values after P* (including the month itself) leaves the history features alone."""
+    signals = make_signals()
+    base = build(signals)
+    edited = signals.copy()
+    hit = (edited["signal_id"] == "msrs_yoy_TOTAL") & (edited["period_start"] > ts("2023-04-01"))
+    edited.loc[hit, "value"] = 987.0
+    changed = build(edited)
+    assert hist(base, "retail_sales", "2023-08-01") == hist(changed, "retail_sales", "2023-08-01")
+    assert hist(base, "retail_sales", "2023-08-01")["last"] != 987.0
+    assert changed.table.set_index(["target_name", "target_month"])["target_value"][
+        ("retail_sales", ts("2023-08-01"))] == 987.0     # still the label
+
+
+def test_target_history_uses_the_target_release_lag(monkeypatch):
+    """Shortening the configured lag moves P*, which proves the lag logic drives these features."""
+    signals = make_signals()
+    short = dict(config.RELEASE_LAG_DAYS, msrs=30)
+    monkeypatch.setattr(config, "RELEASE_LAG_DAYS", short)
+    h = hist(build(signals), "retail_sales", "2023-08-01")
+    assert h["last"] == raw_target(signals, "msrs_yoy_TOTAL", "2023-07-01")
+
+
+def test_target_history_gap_is_explicit():
+    """A missing published month leaves the history NaN instead of using an older value."""
+    signals = make_signals()
+    drop = (signals["signal_id"] == "msrs_yoy_TOTAL") & (signals["period_start"] == ts("2023-04-01"))
+    result = build(signals[~drop])
+    h = hist(result, "retail_sales", "2023-08-01")
+    assert pd.isna(h["last"]) and pd.isna(h["chg1"]) and pd.isna(h["roll3_mean"])
+    assert h["lag1"] == raw_target(signals, "msrs_yoy_TOTAL", "2023-03-01")
+
+
+def test_pandemic_regime_flag_marks_the_configured_months():
+    """The flag is 1 only inside config.PANDEMIC_REGIME and is a meta column, not a feature."""
+    table = build(make_signals()).table
+    rows = table[table["target_name"] == "retail_sales"].set_index("target_month")["pandemic_regime"]
+    assert rows[ts("2020-02-01")] == 0 and rows[ts("2020-03-01")] == 1
+    assert rows[ts("2021-12-01")] == 1 and rows[ts("2022-01-01")] == 0
+    assert "pandemic_regime" not in splitting.feature_columns(table)
+
+
+def test_default_training_window_excludes_2020_21_without_dropping_rows():
+    """2019-2021 labelled months are pre_window (kept in the table); training starts 2022-01."""
+    result = build(make_signals())
+    table = result.table[result.table["target_name"] == "retail_sales"].set_index("target_month")
+    assert config.TRAIN_START == "2022-01-01"
+    assert (table.loc[:"2021-12-01", "split"] == "pre_window").all()
+    assert table.loc[ts("2022-01-01"), "split"] == "train"
+    assert table.loc[ts("2020-04-01"), "target_value"] == table.loc[ts("2020-04-01"), "target_value"]   # not NaN
+    boundary = result.boundaries["retail_sales"]
+    assert (table.loc[boundary.test_start:boundary.test_end, "split"] == "test").all()
+
+
+def test_train_start_none_restores_full_history_and_same_test_window(monkeypatch):
+    """TRAIN_START=None trains on everything before the test window; the test window is identical."""
+    default = build(make_signals())
+    monkeypatch.setattr(config, "TRAIN_START", None)
+    wide = build(make_signals())
+    assert wide.boundaries == default.boundaries
+    assert "pre_window" not in set(wide.table["split"])
+    assert (wide.table["split"] == "train").sum() > (default.table["split"] == "train").sum()

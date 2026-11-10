@@ -1,6 +1,6 @@
 # Blockers
 
-_Status after the real FRED run and the one-gap z-score rule: FRED works (item 2 below is resolved) and models run for both targets (section "Real FRED run: October 2025 gap" below). Items 1 and 3 are unchanged._
+_Status after phase five: nothing new blocks the dashboard (see "Phase five notes"). Status after the real FRED run and the one-gap z-score rule: FRED works (item 2 below is resolved) and models run for both targets (section "Real FRED run: October 2025 gap"). Items 1 and 3 are unchanged._
 
 # Phase one blockers
 
@@ -236,6 +236,35 @@ untouched. Results: README, "Current results".
 Also open: **revision look-ahead.** FRED returns the latest vintage; first-release
 or as-of-date vintages (`get_series_first_release` / `get_series_as_of_date`) would
 remove it but were not used. All scores are somewhat optimistic for that reason.
+
+## Phase five notes
+
+* **Not deployed.** No Streamlit Community Cloud account or GitHub-linked
+  deployment was available here, so the app was run locally
+  (`streamlit run app/streamlit_app.py`), smoke-tested with Streamlit's `AppTest`,
+  and checked in a bare environment holding only `app/requirements.txt`, but the
+  hosted deployment itself is untested. The README's live-demo link is a
+  placeholder. **To unblock:** create the app on share.streamlit.io (main file
+  `app/streamlit_app.py`, Python 3.12) and put its URL in the README. One thing to
+  verify on first deploy: that Community Cloud picks `app/requirements.txt` (next
+  to the entry point) rather than the root file; if it picks the root file the app
+  still works, only the install is slower.
+* **The demo database holds MSRS (California) and the phase-four models only.**
+  FRED (key), VIIRS (Earth Engine) and card spending (no verified series) are
+  still blocked as described above, and Indeed has too little history for a
+  z-score and is deliberately never exported to the public demo (scraped data,
+  non-commercial use only). The app shows each of these as "No data yet" with the
+  reason; nothing is faked. Consequence for tab 3: cross-source divergences cannot
+  be assessed yet; only subsector-versus-total divergences within retail (MSRS) are
+  shown.
+* **Manual refresh.** The demo snapshot is rebuilt by hand with
+  `python -m src.export_demo` and committed; nothing refreshes it automatically.
+  It is a binary SQLite file in git, so each refresh adds about its size (~250 KB)
+  to the history.
+* **Decision to review: the app's trend and divergence thresholds** (3-month
+  windows, 0.25 standard deviations for a trend, 0.5 for a divergence, 2.0 for
+  "strong") are my choices, set in `config.py` before looking at any divergence
+  output; they are not estimated from data.
 
 ## Decisions to review (not blockers)
 

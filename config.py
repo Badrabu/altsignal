@@ -621,3 +621,22 @@ MODEL_RANDOM_STATE = 0
 RIDGE_ALPHAS = [10 ** (e / 4) for e in range(-8, 17)]          # 0.01 ... 10,000
 TREE_GRID = {"max_depth": [2, 3], "min_samples_leaf": [3, 5, 8]}
 GBM_GRID = {"n_estimators": [50, 100], "max_depth": [1, 2], "learning_rate": [0.05]}
+
+# --- Phase five: Streamlit app and demo database ---------------------------
+# The app reads ``DB_PATH`` when it exists and has data; otherwise it falls back
+# to this small committed snapshot so a deployed copy (Streamlit Community Cloud)
+# has data without any credentials. Rebuild it with ``python -m src.export_demo``.
+DEMO_DB_PATH = DATA_DIR / "demo" / "altsignal_demo.db"
+# Only sources whose data is public and may be redistributed go into the demo
+# snapshot. Indeed is scraped (non-commercial use only, terms of service unclear)
+# and is never exported; card spending is third-party data with its own terms.
+DEMO_EXPORT_SOURCES = (SOURCE_MSRS, SOURCE_VIIRS, SOURCE_FRED_TARGETS)
+# A divergence needs both signals at least this many standard deviations from
+# their own baseline (z-score), or a 3-month z-score change of at least this much.
+DIVERGENCE_MIN_Z = 0.5
+# A gap (difference of the two z-scores) of at least this is "strong"; below it "moderate".
+DIVERGENCE_STRONG_GAP = 2.0
+# Trend rule used by the app: mean of the last 3 months against the mean of the 3
+# months before, in units of the series' own standard deviation.
+TREND_WINDOW_MONTHS = 3
+TREND_MIN_RATIO = 0.25

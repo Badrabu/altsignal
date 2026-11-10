@@ -1,6 +1,6 @@
 # Blockers
 
-_Status after phase four: one blocker is now blocking real results (the FRED key, item 2 below, and see "Phase four notes"). Items 1-3 are otherwise unchanged; phases two and three for VIIRS and FRED are implemented and unit-tested against fixtures/mocks only._
+_Status after phase four: the FRED key (item 2 below, see "Phase four notes") still blocks the unemployment target. Items 1-3 are otherwise unchanged; phases two and three for VIIRS and FRED are implemented and unit-tested against fixtures/mocks only._
 
 # Phase one blockers
 
@@ -172,11 +172,13 @@ and run `python -m src.ingest.viirs`.
   vintages (`get_series_first_release` / `get_series_as_of_date`) would fix it
   for unemployment but cannot be tested without a key. MSRS vintages are not
   stored at all.
-* **Result to review:** on the retail-sales target no model beats naive (see the
-  README results). That is a finding, not a bug, but it suggests phase three's
-  features should add the target's own lags and perhaps a way to handle the
-  2020-21 pandemic swings before more models are tried. Not done here (outside
-  phase four's scope).
+* **Rerun after the phase-three revision.** With the 2022+ training window and
+  target-own lags, ridge and the tree edge out naive on the six test months
+  (details and caveats in the README); the first run (all history, no own lags)
+  had no model near naive. `MODEL_MAX_MISSING_SHARE` was lowered from 0.5 to 0.1
+  because the sparse MSRS subsectors (448, 451, 452) left only 27 of 48 complete
+  training rows. The naive rules, the 10% margin and the gradient-boosting gate
+  are unchanged. FRED_API_KEY was checked again and was still not set.
 
 ## Decisions to review (not blockers)
 

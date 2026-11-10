@@ -13,6 +13,12 @@ from src.features import split as sp
 from src.models import fit, run_models as rm
 
 
+@pytest.fixture(autouse=True)
+def no_train_start(monkeypatch):
+    """The synthetic tables start in 2019; tests of TRAIN_START set their own value."""
+    monkeypatch.setattr(config, "TRAIN_START", None)
+
+
 def make_table(n=60, signal=True, seed=0, lag_days=40, unlabeled=2):
     """Build a synthetic feature table for one target ("retail_sales") with 4 features.
 
@@ -37,7 +43,9 @@ def make_table(n=60, signal=True, seed=0, lag_days=40, unlabeled=2):
                           "target_available": month_end + pd.Timedelta(days=lag_days),
                           "target_value": target})
     boundary = sp.define_boundary("retail_sales", "msrs_yoy_TOTAL", months[:n])
-    table["split"] = [sp.assign_split(m, pd.notna(v), boundary) for m, v in zip(months, target)]
+    table["split"] = [sp.assign_split(m, pd.notna(v), boundary, config.TRAIN_START)
+                      for m, v in zip(months, target)]
+    table["pandemic_regime"] = 0
     return pd.concat([table, feats], axis=1), boundary
 
 
@@ -68,6 +76,37 @@ def test_fit_model_only_accepts_a_trainset():
     table, b = make_table()
     with pytest.raises(TypeError):
         fit.fit_model("ridge", sp.open_test_set(table, "retail_sales"))
+
+
+def test_train_start_keeps_early_rows_out_of_every_fitted_step(monkeypatch):
+    """With TRAIN_START set, pre_window rows are never fitted on and the models only see later months."""
+    monkeypatch.setattr(config, "TRAIN_START", "2021-01-01")
+    table, b = make_table(n=84)
+    table["split"] = [sp.assign_split(m, pd.notna(v), b, config.TRAIN_START)
+                      for m, v in zip(table["target_month"], table["target_value"])]
+    assert (table["split"] == "pre_window").sum() == 24
+    train, _ = train_for(table, b)
+    assert pd.to_datetime(train.frame["target_month"]).min() == pd.Timestamp("2021-01-01")
+    changed = table.copy()
+    changed.loc[changed["split"] == "pre_window", "target_value"] += 500.0     # must not matter
+    a = fit.fit_model("ridge", train, 0)
+    c = fit.fit_model("ridge", train_for(changed, b)[0], 0)
+    assert a.params == c.params and a.cv_rmse == c.cv_rmse
+    report = run_with(table, b)
+    assert report["train_start"] == "2021-01-01"
+    with pytest.raises(sp.SplitError, match="before the training start"):
+        sp.TrainSet(table[table["split"] == "pre_window"].assign(split="train"), b)
+
+
+def test_target_history_and_pandemic_flag_columns_are_handled():
+    """Own-history features are ordinary features; the pandemic flag is a meta column, never a feature."""
+    table, b = make_table()
+    table["target_hist__last"] = table["target_value"].shift(2)
+    table.loc[table["target_month"] < "2019-06-01", "pandemic_regime"] = 1
+    train, _ = train_for(table, b)
+    assert "target_hist__last" in train.features.columns
+    assert "pandemic_regime" not in train.features.columns
+    assert "pandemic_regime" not in fit.fit_model("ridge", train).columns
 
 
 def test_trainset_cannot_contain_test_rows():

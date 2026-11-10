@@ -96,6 +96,9 @@ class FittedModel:
 def _restrict(train: sp.TrainSet, columns: list[str]) -> sp.TrainSet:
     """Build a TrainSet that holds only the given feature columns.
 
+    The rows were already checked against ``config.TRAIN_START`` when the
+    original ``TrainSet`` was built, so this one skips that check.
+
     Args:
         train: The training rows.
         columns: Feature columns to keep.
@@ -105,7 +108,7 @@ def _restrict(train: sp.TrainSet, columns: list[str]) -> sp.TrainSet:
     """
     frame = train.frame
     keep = [c for c in frame.columns if c in sp.META_COLUMNS or c in columns]
-    return sp.TrainSet(frame[keep], train.boundary)
+    return sp.TrainSet(frame[keep], train.boundary, train_start=None)
 
 
 def _subset(train: sp.TrainSet, positions: np.ndarray) -> sp.TrainSet:
@@ -118,7 +121,7 @@ def _subset(train: sp.TrainSet, positions: np.ndarray) -> sp.TrainSet:
     Returns:
         A new ``TrainSet`` (still only training rows).
     """
-    return sp.TrainSet(train.frame.iloc[positions], train.boundary)
+    return sp.TrainSet(train.frame.iloc[positions], train.boundary, train_start=None)
 
 
 def prepare_training_rows(train: sp.TrainSet) -> tuple[sp.TrainSet, int]:

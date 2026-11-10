@@ -8,7 +8,8 @@ postings, and satellite nighttime lights. The full specification is in
 **Status: phases one (ingestion), two (cleaning, alignment, final signals
 table), three (feature engineering) and four (models and benchmarks) are built.**
 The Streamlit app and the final write-up come in later phases. **Headline result of
-phase four: no model beats the naive benchmark** (see
+phase four: on a six-month test window the tree and ridge edge out naive, but
+only weakly and not convincingly, and not by the pre-set margin for ridge** (see
 [Phase four: models and results](#phase-four-models-and-results)). Open blockers are listed in [`blockers.md`](blockers.md).
 
 ## Choosing the state
@@ -236,12 +237,16 @@ database rows (`models` is unique on model id + metric, `forecasts` on model id
 ### Design (fixed before any result was computed)
 
 * **Naive benchmarks** (`src/models/benchmarks.py`, committed first and
-  separately): *last observation carried forward* (the latest target value
+  separately, unchanged since): *last observation carried forward* (the latest target value
   already published at the prediction time, so for MSRS this is about four
   months old) and *year-over-year seasonal naive* (the target's own value 12
   months earlier). Both use only values public at `as_of`, as the models do.
-* **Ridge regression** (primary): features standardized with
-  `fit_standardizer`, columns chosen with `select_columns` (at most 50% missing
+* **Training window**: only rows labelled `train` (from `config.TRAIN_START`,
+  2022-01-01, to the start of the test window). `pre_window` rows are never
+  fitted on, and `pandemic_regime` is a meta column, not a feature.
+* **Ridge regression** (primary): features (the signals plus the target's own
+  published history `target_hist__*`) standardized with
+  `fit_standardizer`, columns chosen with `select_columns` (at most 10% missing
   in training), penalty chosen by **time-series cross-validation inside the
   training window** (expanding window, 5 folds of 6 months, scaler re-fitted in
   every fold, and a gap of as many months as the target's release lag keeps
@@ -264,52 +269,80 @@ database rows (`models` is unique on model id + metric, `forecasts` on model id
 
 ### Results (California, retail sales; test window Jan-Jun 2026)
 
+**These are the post-fix results.** The first run of phase four (fitted on all
+history from Oct 2020, no target-own lags) found no model close to naive: ridge
+RMSE 4.65 and tree RMSE 10.14 against 2.18 for LOCF. Phase three was then
+revised on first-principles grounds (target-own published history as features,
+a training window starting `config.TRAIN_START = 2022-01-01` that excludes the
+2020-21 base effects, a `pandemic_regime` flag) and the models were re-run
+once. The naive rules, the 10% margin and the gradient-boosting gate were not
+touched. The frozen test window is unchanged.
+
 Target: the Census MSRS total retail year-over-year % change (`msrs_yoy_TOTAL`).
-Features come from the MSRS subsector series only (no Indeed, VIIRS or FRED data
-exists in this database yet). 63 complete training rows (Oct 2020-Dec 2025).
+Features: the MSRS subsector series (z-scores and lags) plus the target's own
+published history (`target_hist__*`); no Indeed, VIIRS or FRED data exists in
+this database yet. Training: Jan 2022-Dec 2025, 48 months, all complete, 98
+columns (the three sparse subsectors 448, 451 and 452 are dropped because
+Census suppresses some of their months).
 
 | Model | MAE | RMSE | Tuned parameters (training CV RMSE) |
 | --- | --- | --- | --- |
-| Naive: last observation carried forward | **1.57** | **2.18** | none |
-| Naive: seasonal (value 12 months earlier) | 2.65 | 3.25 | none |
-| Ridge | 4.30 | 4.65 | alpha = 10,000 (8.34) |
-| Decision tree | 8.87 | 10.14 | depth 2, min leaf 8 (14.34) |
+| Naive: last observation carried forward | 1.57 | 2.18 | none (CV RMSE 2.85) |
+| Naive: seasonal (value 12 months earlier) | 2.65 | 3.25 | none (CV RMSE 3.66) |
+| Ridge | 1.52 | 1.78 | alpha = 10,000 (3.42) |
+| Decision tree | **1.08** | **1.31** | depth 2, min leaf 5 (4.25) |
 | Gradient boosting | not run | not run | ridge did not beat naive in the training CV |
 
-(Units: percentage points of year-over-year growth. In the training CV, ridge
-had an RMSE of 8.34 against 2.85 for LOCF and 3.66 for seasonal naive.)
+(Units: percentage points of year-over-year growth; all models are scored on
+the same six months.)
 
-**Honest reading: no model beats naive, by any margin.** The best naive
-benchmark (carrying the last published value forward) has less than half the
-RMSE of ridge, the best model. Ridge picked the largest penalty in its grid,
-which means the cross-validation preferred a model that is almost constant, and
-it still predicts about 6.5% growth (the average of its usable training rows,
-lifted by 2021 base effects of up to +82%) against actual growth of 1-6% in the
-test months. The tree does worse. The models were not tuned further after seeing the
-test result (that would use the test set); a wider penalty grid would at most
-move ridge towards the training average.
+**Reading, without overselling it.**
 
-Why this should not surprise us, and how far to trust it:
+* **Ridge** has 18% lower RMSE than the best naive benchmark but only 3% lower
+  MAE, so it does **not** clear the pre-set "meaningful" bar (both MAE and RMSE
+  at least 10% better). In the training CV it was also worse than naive (3.42
+  against 2.85), so gradient boosting did not run, as pre-committed.
+* **The decision tree** clears the bar on the test set (RMSE 40% and MAE 31%
+  lower than LOCF), but this is weak evidence. Its training-CV error (4.25) was
+  the worst of the three, i.e. CV did not predict a win; it predicts only two
+  values (0.67 for most months, 3.65 for three of them), and its test errors
+  all have the same sign (it under-predicts every month). Six months of calm
+  growth between 0.9% and 5.9% is a very small sample, and a flat low forecast
+  happens to sit close to it.
+* **Ridge is nearly a constant.** It chose the largest penalty in its grid
+  (10,000), so it predicts about 2.7% (roughly the training mean) every month.
+  That it beats LOCF on RMSE says more about LOCF being noisy in a calm period
+  (it repeats a figure that is four months old) than about skill in the
+  signals. A wider penalty grid would at most make ridge even closer to a
+  constant; the grid was not changed after seeing results.
+* So: **models edge out naive on this test window, but we cannot call it a
+  nowcasting skill.** Nothing here shows the alternative signals add anything.
 
-* **Tiny samples.** 63 usable training rows, 90 correlated features, and only
-  **six** test months. A six-month comparison can easily flip, and a difference
-  of a point or two is within noise. "No model beats naive" is a statement about
-  this sample, not a proof that the signals are useless.
-* **The training window is dominated by the pandemic.** The target ranges from
-  -34% (Apr 2020) to +82% (Apr 2021) year over year (base effects), which drives the fitted
-  levels; the 2026 test months are calm (1-6%). A model fitted this way
-  over-predicts a calm period.
-* **The naive benchmark is not weak here.** Year-over-year growth is persistent,
-  and LOCF may use any value published before the prediction date, including
-  early test-window months as they get published. The models are not given the
-  target's own lags as features (phase three builds features from the signals
-  only), so they have less information than LOCF has.
+Caveats:
+
+* **Tiny samples.** 48 training rows, 98 correlated features, and only **six**
+  test months. A six-month comparison can flip easily.
+* **The training window changed, and why.** Fitting on the pandemic months made
+  every model chase 2020-21 base effects (the target ran from -34% to +82%);
+  the window now starts in 2022. This is a regime choice made before seeing the
+  new results, but it shrinks the sample, and early-2022 z-scores still use
+  2021 baselines.
+* **Settings that changed with it.** `MODEL_MAX_MISSING_SHARE` went from 0.5 to
+  0.1, because with 0.5 only 27 of 48 training rows were complete (the sparse
+  subsectors); any value up to 0.2 gives the same 98 columns and 48 rows, and it
+  was chosen from training-window missingness before any model was fitted. The
+  first CV fold now trains on only 15 rows (48 rows, 5 folds of 6 months, a gap
+  of 3 months), which makes the CV scores noisy.
+* **LOCF vs the models.** LOCF may use any value published before the
+  prediction date, including early test-window months as they get published.
+  The models now also see the target's own published history, but only as it
+  stood at each month's `as_of`.
 * **Models are fitted once** on the whole training window, not re-estimated as
   data arrive, and the CV gap only approximates real-time conditions.
 * **Revision look-ahead.** FRED returns the latest revised values, not what was
   known at the time, and MSRS is also revised and only the current vintage is
-  stored (see `blockers.md`). Results for official series would be somewhat
-  too optimistic for any model; vintage data was not available to correct this.
+  stored (see `blockers.md`). Results would be somewhat optimistic for any
+  model; vintage data was not available to correct this.
 * Job postings and nighttime lights are not in these results: there is not yet
   enough Indeed history for z-scores and VIIRS needs Earth Engine access.
 

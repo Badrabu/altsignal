@@ -595,7 +595,12 @@ GRADIENT_BOOSTING_REQUIRES_RIDGE_CV_BEATS_NAIVE = True
 # Model settings (set before results were computed; see README, "Phase four").
 # Columns with more than this share of missing TRAINING values are not used;
 # training rows that are still incomplete are dropped (nothing is imputed).
-MODEL_MAX_MISSING_SHARE = 0.5
+# 0.5 was the first setting; with the 2022+ training window it left only 27 of
+# 48 complete rows because three sparse MSRS subsectors (448, 451, 452) have
+# suppressed months. Any share up to 0.2 keeps the same 98 complete columns and
+# all 48 rows, so 0.1 was chosen from training-window missingness alone, before
+# any model was fitted on the new window.
+MODEL_MAX_MISSING_SHARE = 0.1
 # Cross-validation INSIDE the training window: expanding window, this many
 # folds, each validating on this many months. A gap (derived from the target's
 # release lag) keeps labels that were not yet public out of the training part.

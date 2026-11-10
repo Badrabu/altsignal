@@ -499,6 +499,28 @@ def write_forecasts(rows: pd.DataFrame | list[dict], db_path: str | Path | None 
     return len(records)
 
 
+def delete_models(model_ids: list[str], db_path: str | Path | None = None) -> int:
+    """Delete models (all their metric rows) and all forecasts of those models.
+
+    Used to remove results of models that a rerun no longer produces.
+
+    Args:
+        model_ids: Model ids to remove.
+        db_path: Database file. Defaults to ``config.DB_PATH``.
+
+    Returns:
+        The number of rows deleted (``models`` plus ``forecasts``).
+    """
+    ids = [(m,) for m in model_ids]
+    if not ids:
+        return 0
+    with get_connection(db_path) as conn:
+        before = conn.total_changes
+        conn.executemany("DELETE FROM forecasts WHERE model_id = ?", ids)
+        conn.executemany("DELETE FROM models WHERE model_id = ?", ids)
+        return conn.total_changes - before
+
+
 def read_forecasts(model_id: str | None = None, db_path: str | Path | None = None) -> pd.DataFrame:
     """Read forecasts, ordered by target period.
 

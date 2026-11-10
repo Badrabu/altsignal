@@ -1,6 +1,6 @@
 # Blockers
 
-_Status after phase three: no new blockers. The three items below are unchanged; phases two and three for VIIRS and FRED are implemented and unit-tested against fixtures/mocks only._
+_Status after the real FRED run and the one-gap z-score rule: FRED works (item 2 below is resolved) and models run for both targets (section "Real FRED run: October 2025 gap" below). Items 1 and 3 are unchanged._
 
 # Phase one blockers
 
@@ -155,6 +155,87 @@ and run `python -m src.ingest.viirs`.
   this helps is for phase four to measure; I did not evaluate models.
 * MSRS can also be revised after first release, and only the current vintage is
   stored, so it carries the same kind of (smaller, unquantified) revision risk.
+
+## Phase four notes
+
+* **FRED_API_KEY was not available in this environment** (the variable was not
+  set when phase four was built; its value was never read or printed). So the
+  real FRED ingest and the **unemployment target were not run**; only the
+  retail-sales target (Census MSRS, real data, no key needed) was modelled.
+  Unemployment is reported as "no data in the feature table", not faked. The
+  code path is the same for both targets and is unit-tested with synthetic
+  tables only. **To unblock:** export `FRED_API_KEY`, then run
+  `python -m src.ingest.fred`, `python -m src.process.build_signals`,
+  `python -m src.features.build_features` and `python -m src.models.run_models`
+  (the unemployment train/test split is defined and frozen on the first build).
+* **Revision look-ahead is still open** (phase three note above). FRED
+  vintages (`get_series_first_release` / `get_series_as_of_date`) would fix it
+  for unemployment but cannot be tested without a key. MSRS vintages are not
+  stored at all.
+* **Rerun after the phase-three revision.** With the 2022+ training window and
+  target-own lags, ridge and the tree edge out naive on the six test months
+  (details and caveats in the README); the first run (all history, no own lags)
+  had no model near naive. `MODEL_MAX_MISSING_SHARE` was lowered from 0.5 to 0.1
+  because the sparse MSRS subsectors (448, 451, 452) left only 27 of 48 complete
+  training rows. The naive rules, the 10% margin and the gradient-boosting gate
+  are unchanged. FRED_API_KEY was checked again and was still not set.
+
+## Real FRED run: October 2025 gap (resolved by the one-gap z-score rule)
+
+**Resolved:** item 2 above. With a real key, `python -m src.ingest.fred` logged
+`fred_targets` = `success` (1,970 rows: `CAUR`, `UNRATE`, `RSAFS`; the key was never
+printed or stored); `fred_card` is still `failed`/skipped (item 1). `build_signals`
+and `build_features` then built the unemployment target (state series `CAUR`,
+national fallback not needed): 50 train, 6 test (2026-04 to 2026-09), 552
+pre_window and 2 unlabeled rows.
+
+**Problem.** The BLS did not publish unemployment for October 2025 (no household
+survey during the federal shutdown); FRED has no value for `CAUR` or `UNRATE` at
+2025-10-01 (`RSAFS` is complete). Under the existing rules:
+
+* a z-score needs a complete 12-month baseline, so all FRED z-scores are empty
+  from 2025-11 to 2026-10, and every lag/change/rolling feature (built on z-scores)
+  is empty with them. **All FRED-derived features are empty in all six test months
+  of both targets.**
+* training rows with any missing feature are dropped: 45 of 50 unemployment rows
+  and 46 of 48 retail rows remain, below the 48 the CV needs, so ridge and tree are
+  not fitted ("only 45 complete training rows; need at least 48"). This also removes
+  the retail-sales models that ran before FRED data existed (those results still
+  reproduce exactly on a database without FRED data).
+
+**What I tried.** Lowering `MODEL_MIN_TRAIN_ROWS_FIRST_FOLD` from 18 to 12 so that
+the models would fit: they fit, but no test month had a full set of features, so
+nothing could be scored (and the CLI crashed formatting empty scores). Reverted; no
+setting was changed. Naive benchmarks (LOCF, seasonal), the 10% margin, the
+boosting gate and the frozen split are untouched. Naive test scores: unemployment
+LOCF MAE 0.033 / RMSE 0.058, seasonal 0.300 / 0.321; retail LOCF 1.57 / 2.18,
+seasonal 2.65 / 3.25.
+
+**Decision taken (by the user): option 1, tolerate one missing month in a z-score
+baseline** (`config.BASELINE_MIN_PERIODS`, phase-two rule, documented in the README
+and the phase two notes; two missing months still give no z-score; nothing is
+imputed). The full chain was then rerun on a fresh database with real data.
+
+**What the rule did not fix, and the disclosed setting change.** Lag, change and
+rolling windows that touch October 2025 stay empty for up to six months, and the
+rule also gives z-scores to sparse MSRS subsectors. With `MODEL_MAX_MISSING_SHARE`
+= 0.1 only 43 (retail) and 40 (unemployment) training rows were complete, below the
+48 the CV needs, so no model was fitted. `MODEL_MAX_MISSING_SHARE` was therefore
+set to 0.0 (only columns with no missing training value): 0.0 is the only value
+that keeps all 48 (retail) and all 50 (unemployment) training rows complete, chosen
+from training-window missingness alone before any model was fitted on this data.
+Side effects: unemployment models use 103 columns that are mostly MSRS and national
+retail-sales features, with almost all FRED unemployment features dropped; and two
+retail test months (Jan, Feb 2026) cannot be forecast by any model (a feature
+window touches the hole), so retail is scored on four months (Mar-Jun 2026).
+Naive benchmarks, the 10% margin, the boosting gate and the frozen test split are
+untouched. Results: README, "Current results".
+
+**Bug fixed (exposed by the real data):** `run_models` crashed printing the report when a target had no scorable test month (empty scores are now shown as `n/a`; test added). Also fixed: `run_models` left stale model and forecast rows from earlier runs (for example ridge rows after a rerun in which ridge was no longer fitted); a rerun now replaces the target's stored models and forecasts (`db.delete_models`; tests added).
+
+Also open: **revision look-ahead.** FRED returns the latest vintage; first-release
+or as-of-date vintages (`get_series_first_release` / `get_series_as_of_date`) would
+remove it but were not used. All scores are somewhat optimistic for that reason.
 
 ## Decisions to review (not blockers)
 

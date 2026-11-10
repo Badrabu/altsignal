@@ -573,3 +573,51 @@ PANDEMIC_REGIME = ("2020-03-01", "2021-12-01")
 # Target-own-history features (the target's last PUBLISHED raw values, in the
 # target's own units, built at each target's latest published period).
 TARGET_HISTORY_PREFIX = "target_hist"
+
+# --- Phase four: benchmarks and models -------------------------------------
+# These rules are fixed BEFORE any model result is computed, so they cannot be
+# tuned to flatter a model.
+#
+# Naive benchmarks (src/models/benchmarks.py):
+#   * last observation carried forward (LOCF): the latest value of the target
+#     that was already published at the prediction time;
+#   * year-over-year seasonal naive: the target's own value 12 months earlier.
+NAIVE_SEASONAL_LAG_MONTHS = 12
+# "Meaningfully better than naive" means a test RMSE at least this share lower
+# than the best naive benchmark's RMSE. With a six-month test set even this is
+# weak evidence, and the README says so.
+MEANINGFUL_MARGIN = 0.10
+# Gradient boosting is only run if ridge "works". Ridge works if, in the
+# cross-validation inside the TRAINING window (never the test set), its RMSE is
+# lower than that of the best naive benchmark on the same validation months.
+GRADIENT_BOOSTING_REQUIRES_RIDGE_CV_BEATS_NAIVE = True
+
+# Model settings (set before results were computed; see README, "Phase four").
+# Columns with more than this share of missing TRAINING values are not used;
+# training rows that are still incomplete are dropped (nothing is imputed).
+# 0.5 was the first setting; with the 2022+ training window it left only 27 of
+# 48 complete rows because three sparse MSRS subsectors (448, 451, 452) have
+# suppressed months. Any share up to 0.2 keeps the same 98 complete columns and
+# all 48 rows, so 0.1 was chosen from training-window missingness alone, before
+# any model was fitted on the new window.
+# Changed again to 0.0 (only columns complete in every training row) after the
+# real FRED data and the one-gap z-score rule (BASELINE_MIN_PERIODS) arrived. The
+# BLS has no October 2025 release, and every lag/change/rolling window that
+# touches that month is empty, as are the z-scores of sparse MSRS subsectors that
+# now exist. At 0.1 only 43 (retail) and 40 (unemployment) training rows were
+# complete, below the 48 the CV needs; at any value from 0.02 to 0.1 unemployment
+# had 40-43 complete rows. 0.0 is the only value that keeps all 48 (retail) and
+# all 50 (unemployment) training rows complete, so it follows the same rule as
+# before (the loosest setting that keeps every training row), chosen from
+# training-window missingness alone before any model was fitted on this data.
+MODEL_MAX_MISSING_SHARE = 0.0
+# Cross-validation INSIDE the training window: expanding window, this many
+# folds, each validating on this many months. A gap (derived from the target's
+# release lag) keeps labels that were not yet public out of the training part.
+MODEL_CV_FOLDS = 5
+MODEL_CV_VALIDATION_MONTHS = 6
+MODEL_MIN_TRAIN_ROWS_FIRST_FOLD = 18
+MODEL_RANDOM_STATE = 0
+RIDGE_ALPHAS = [10 ** (e / 4) for e in range(-8, 17)]          # 0.01 ... 10,000
+TREE_GRID = {"max_depth": [2, 3], "min_samples_leaf": [3, 5, 8]}
+GBM_GRID = {"n_estimators": [50, 100], "max_depth": [1, 2], "learning_rate": [0.05]}

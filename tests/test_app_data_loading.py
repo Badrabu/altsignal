@@ -188,14 +188,23 @@ def test_demo_database_holds_only_allowed_public_data(demo_path):
 
 
 def test_demo_database_is_consistent_with_its_models(demo_path):
+    """Stored metrics equal the errors of the stored forecasts on the months every model of the target scored."""
     models, forecasts = db.read_models(db_path=demo_path), db.read_forecasts(db_path=demo_path)
     assert not models.empty and not forecasts.empty
     assert set(forecasts["model_id"]) <= set(models["model_id"])
     wide = models.pivot_table(index="model_id", columns="metric_name", values="metric_value")
-    for model_id, row in wide.iterrows():                                  # stored metrics equal the stored forecasts' errors
-        meta = models[models["model_id"] == model_id].iloc[0]
-        mine = forecasts[(forecasts["model_id"] == model_id) & forecasts["actual_value"].notna() &
-                         (forecasts["target_period"] >= meta["test_start"]) & (forecasts["target_period"] <= meta["test_end"])]
-        assert len(mine) == 6
-        assert row["MAE"] == pytest.approx(mine["error"].abs().mean())
-        assert row["RMSE"] == pytest.approx((mine["error"] ** 2).mean() ** 0.5)
+    meta = models.groupby("model_id").first()
+
+    def scored(model_id):
+        rows = forecasts[(forecasts["model_id"] == model_id) & forecasts["actual_value"].notna() &
+                         (forecasts["target_period"] >= meta.loc[model_id, "test_start"]) &
+                         (forecasts["target_period"] <= meta.loc[model_id, "test_end"])]
+        return rows.set_index("target_period")
+
+    for target, ids in meta.groupby("target").groups.items():
+        common = set.intersection(*[set(scored(m).index) for m in ids])
+        assert len(common) >= 4, target                                    # every target keeps a usable test set
+        for model_id in ids:
+            errors = scored(model_id).loc[sorted(common), "error"]
+            assert wide.loc[model_id, "MAE"] == pytest.approx(errors.abs().mean())
+            assert wide.loc[model_id, "RMSE"] == pytest.approx((errors ** 2).mean() ** 0.5)

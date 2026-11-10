@@ -495,11 +495,10 @@ card spending, and Indeed while it has little history) is shown with a clear
 forward; a missing month stays a gap in the charts; a series with fewer than 12
 months of history has no z-score and is shown without one. With the committed
 demo data, Census MSRS (California) and the official FRED series (state and
-national unemployment, national retail sales) appear, with the naive-benchmark
-results of phase four. Because the October 2025 unemployment release does not
-exist, the FRED z-scores stop at Sep 2025 (a z-score needs a full 12-month
-baseline), so the signals tab shows them with that older latest month; raw values
-go to Sep 2026.
+national unemployment, national retail sales) appear, with the phase-four results
+(naive benchmarks, ridge and tree) for both targets. The October 2025 unemployment
+release does not exist; the one-gap z-score rule keeps the FRED z-scores running
+through it (that month simply has no value).
 
 Code: `app/streamlit_app.py` (the page), `app/data_loading.py` (reads through
 `db.py`), `app/analysis.py` (trend, scoreboard, caveats), `app/divergence.py`
@@ -542,8 +541,8 @@ git add data/demo/altsignal_demo.db && git commit -m "Refresh demo data" && git 
 Streamlit Community Cloud redeploys when the push lands. The export leaves the
 existing file untouched if there is nothing to export. The snapshot in this
 repository was built on 2026-11-10 from the real MSRS download (California) and
-the phase-four results above: the real FRED series, and the naive benchmarks for
-both targets (no ridge or tree could be fitted, see phase four).
+the phase-four results above: the real FRED series and the models and naive
+benchmarks of both targets.
 
 ### Deploying to Streamlit Community Cloud (free)
 

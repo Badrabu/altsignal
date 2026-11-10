@@ -108,6 +108,24 @@ def summarize_signals(signals: pd.DataFrame, value_col: str) -> pd.DataFrame:
     return table.sort_values(["source", "_order", "label"]).drop(columns="_order").reset_index(drop=True)
 
 
+def _scored_months(row: pd.Series, forecasts: pd.DataFrame) -> set:
+    """Test-window months with an official value that this model forecast.
+
+    Args:
+        row: A model's metadata row (``model_id``, ``test_start``, ``test_end``).
+        forecasts: The models' forecasts.
+
+    Returns:
+        A set of month timestamps.
+    """
+    mine = forecasts[forecasts["model_id"] == row["model_id"]] if not forecasts.empty else forecasts
+    if mine.empty or pd.isna(row["test_start"]):
+        return set()
+    in_window = (mine["target_period"] >= pd.to_datetime(row["test_start"])) & \
+                (mine["target_period"] <= pd.to_datetime(row["test_end"]))
+    return set(mine.loc[in_window & mine["actual_value"].notna(), "target_period"])
+
+
 def build_scoreboard(models: pd.DataFrame, forecasts: pd.DataFrame, margin: float | None = None) -> pd.DataFrame:
     """Compare every model with the best naive benchmark on the test set.
 
@@ -138,16 +156,12 @@ def build_scoreboard(models: pd.DataFrame, forecasts: pd.DataFrame, margin: floa
     for col in ("MAE", "RMSE", "CV_RMSE"):
         if col not in table:
             table[col] = np.nan
-    counts = []
-    for _, row in table.iterrows():
-        mine = forecasts[forecasts["model_id"] == row["model_id"]] if not forecasts.empty else forecasts
-        if mine.empty or pd.isna(row["test_start"]):
-            counts.append(0)
-            continue
-        in_window = (mine["target_period"] >= pd.to_datetime(row["test_start"])) & \
-                    (mine["target_period"] <= pd.to_datetime(row["test_end"]))
-        counts.append(int((in_window & mine["actual_value"].notna()).sum()))
-    table["test_months"] = counts
+    month_sets = [_scored_months(row, forecasts) for _, row in table.iterrows()]
+    # Phase four scores every model on the SAME months: those every model could forecast.
+    non_empty = [m for m in month_sets if m]
+    common = set.intersection(*non_empty) if non_empty else set()
+    table["test_months"] = len(common)
+    table.attrs["own_test_months"] = {row["model_id"]: len(m) for (_, row), m in zip(table.iterrows(), month_sets)}
 
     naive = table[(table["kind"] == NAIVE_KIND) & table["RMSE"].notna()]
     table["rmse_vs_naive"] = np.nan
@@ -198,6 +212,11 @@ def honesty_notes(scoreboard: pd.DataFrame, forecasts: pd.DataFrame, short_names
     n_test = int(scoreboard["test_months"].max()) if len(scoreboard) else 0
     if n_test:
         notes.append(f"The test window has only {n_test} scored months, so any ranking of models can flip easily.")
+    own = scoreboard.attrs.get("own_test_months", {})
+    if own and max(own.values()) > n_test:
+        notes.append(f"Every model is scored on the same {n_test} months. Some models forecast up to {max(own.values())} "
+                     "test months, but at least one model had a missing feature in the others (nothing is imputed), "
+                     "so those months are left out for all models.")
     best_naive = best_naive_id(scoreboard)
     if fitted.empty:
         notes.append("No ridge, tree or boosting model has test scores for this target: none could be fitted under the "

@@ -149,3 +149,15 @@ def test_honesty_notes_do_not_cry_wolf():
     notes = " ".join(an.honesty_notes(board, forecasts, {"X_ridge": "ridge", "X_naive_locf": "naive_locf"}))
     assert "does NOT clear" in notes
     assert "same sign" not in notes and "distinct value" not in notes and "cross-validation" not in notes
+
+
+def test_scoreboard_counts_only_months_every_model_forecast():
+    """A model that could not forecast some test months shrinks the common scored set for all, with a note."""
+    models = pd.DataFrame(metric_rows("X_naive_locf", "naive", 2.0, 3.0) + metric_rows("X_tree", "tree", 1.0, 1.2, cv=4.0))
+    actual = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    forecasts = pd.DataFrame(forecast_rows("X_naive_locf", [0.0] * 6, actual)
+                             + forecast_rows("X_tree", [1.0] * 4, actual[2:], start="2026-03-01"))
+    board = an.build_scoreboard(models, forecasts)
+    assert (board["test_months"] == 4).all()
+    notes = " ".join(an.honesty_notes(board, forecasts, {"X_tree": "tree", "X_naive_locf": "naive_locf"}))
+    assert "same 4 months" in notes and "up to 6" in notes

@@ -250,21 +250,18 @@ remove it but were not used. All scores are somewhat optimistic for that reason.
   to the entry point) rather than the root file; if it picks the root file the app
   still works, only the install is slower.
 * **The demo database holds MSRS (California), the real FRED official series
-  and the phase-four naive benchmarks.** It was refreshed after the real FRED run:
-  the unemployment target (California `CAUR`) now appears in tab 2 with its naive
-  scores. No ridge or tree rows exist, because none could be fitted (see "Real FRED
-  run: October 2025 gap"); the app says so. VIIRS (Earth Engine) and card spending
-  (no verified series) are still blocked, and Indeed has too little history for a
-  z-score and is deliberately never exported to the public demo (scraped data,
-  non-commercial use only). The app shows each of these as "No data yet" with the
-  reason; nothing is faked. FRED z-scores stop at Sep 2025 (the missing October 2025
-  release), so tab 1 shows that older latest month for them. Cross-source
-  divergences still cannot be assessed (the official FRED targets are not compared as signals);
-  only subsector-versus-total divergences within retail (MSRS) are shown.
-* **Stale model rows.** `run_models` never deletes model rows from an earlier run
-  that no longer exist (for example ridge rows left by a trial run); the demo and
-  stored results had to be rebuilt from a fresh database. Worth a fix in a later
-  phase if models are rerun against an existing database.
+  and the phase-four results of both targets** (naive benchmarks, ridge, tree),
+  refreshed after the real FRED run and the one-gap z-score rule. VIIRS (Earth
+  Engine) and card spending (no verified series) are still blocked, and Indeed has
+  too little history for a z-score and is deliberately never exported to the
+  public demo (scraped data, non-commercial use only). The app shows each of these
+  as "No data yet" with the reason; nothing is faked. Cross-source divergences still
+  cannot be assessed (the official FRED targets are not compared as signals); only
+  subsector-versus-total divergences within retail (MSRS) are shown.
+* **Scoreboard months.** Phase four scores every model on the months all of them
+  could forecast, so retail is scored on 4 of its 6 test months (two have a
+  feature window touching the missing October 2025 release). The app's "Test
+  months" column shows that common number and a note says so.
 * **Manual refresh.** The demo snapshot is rebuilt by hand with
   `python -m src.export_demo` and committed; nothing refreshes it automatically.
   It is a binary SQLite file in git, so each refresh adds about its size (~250 KB)

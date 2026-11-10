@@ -75,33 +75,33 @@ def test_raw_normalized_toggle_changes_the_values():
 
 
 def test_nowcast_tab_shows_weakness_warning_scoreboard_and_error_history():
-    """With real FRED data no model could be fitted, so only the naive benchmarks are scored."""
+    """Retail: ridge and tree beat naive on the four months every model could forecast."""
     at = run_app()
     assert any("weak and not convincing" in w.value for w in at.warning)
     page = texts(at)
     assert "Full error history" in page and "Test-period accuracy" in page
-    assert "No ridge, tree or boosting model has test scores" in page
+    assert "Every model is scored on the same 4 months" in page
     frames = [d.value for d in at.dataframe]
     board = next(f for f in frames if "Test RMSE" in f.columns)
-    assert set(board["Model"]) == {"naive_locf", "naive_seasonal"}
-    assert (board["Test months"] == 6).all()
+    assert {"naive_locf", "naive_seasonal", "ridge", "tree"} == set(board["Model"])
+    assert (board["Test months"] == 4).all()
     history = next(f for f in frames if "Error (official - prediction)" in f.columns)
-    assert len(history) == 12                                           # 2 naive benchmarks x 6 scored months
+    assert history.groupby("Model").size().to_dict() == {"naive_locf": 6, "naive_seasonal": 6, "ridge": 4, "tree": 4}
 
 
-def test_unemployment_target_shows_real_official_data_and_naive_scores():
+def test_unemployment_target_shows_real_official_data_and_models_losing_to_naive():
     at = run_app()
     at.selectbox(key="target").set_value("unemployment").run()
     assert not at.exception
     frames = [d.value for d in at.dataframe]
     board = next(f for f in frames if "Test RMSE" in f.columns)
     scores = board.set_index("Model")
-    assert set(scores.index) == {"naive_locf", "naive_seasonal"}
+    assert set(scores.index) == {"naive_locf", "naive_seasonal", "ridge", "tree"}
     assert scores.loc["naive_locf", "Test MAE"] == pytest.approx(0.0333, abs=1e-3)
     assert scores.loc["naive_locf", "Test RMSE"] == pytest.approx(0.0577, abs=1e-3)
     assert scores.loc["naive_seasonal", "Test MAE"] == pytest.approx(0.30, abs=1e-6)
-    history = next(f for f in frames if "Error (official - prediction)" in f.columns)
-    assert len(history) == 12
+    assert (scores.loc[["ridge", "tree"], "Clears 10% margin"] == "no").all()      # naive wins
+    assert (scores["Test months"] == 6).all()
     assert not any("FRED_API_KEY" in i.value for i in at.info)
 
 

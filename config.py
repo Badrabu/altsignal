@@ -573,3 +573,21 @@ PANDEMIC_REGIME = ("2020-03-01", "2021-12-01")
 # Target-own-history features (the target's last PUBLISHED raw values, in the
 # target's own units, built at each target's latest published period).
 TARGET_HISTORY_PREFIX = "target_hist"
+
+# --- Phase four: benchmarks and models -------------------------------------
+# These rules are fixed BEFORE any model result is computed, so they cannot be
+# tuned to flatter a model.
+#
+# Naive benchmarks (src/models/benchmarks.py):
+#   * last observation carried forward (LOCF): the latest value of the target
+#     that was already published at the prediction time;
+#   * year-over-year seasonal naive: the target's own value 12 months earlier.
+NAIVE_SEASONAL_LAG_MONTHS = 12
+# "Meaningfully better than naive" means a test RMSE at least this share lower
+# than the best naive benchmark's RMSE. With a six-month test set even this is
+# weak evidence, and the README says so.
+MEANINGFUL_MARGIN = 0.10
+# Gradient boosting is only run if ridge "works". Ridge works if, in the
+# cross-validation inside the TRAINING window (never the test set), its RMSE is
+# lower than that of the best naive benchmark on the same validation months.
+GRADIENT_BOOSTING_REQUIRES_RIDGE_CV_BEATS_NAIVE = True

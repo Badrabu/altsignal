@@ -257,6 +257,33 @@ def read_signals(
         return pd.read_sql_query(sql, conn, params=params)
 
 
+def delete_signals(keys: pd.DataFrame, db_path: str | Path | None = None) -> int:
+    """Delete signal rows that fail a data-quality rule.
+
+    Rows are identified by the same key the table is unique on.
+
+    Args:
+        keys: DataFrame with columns signal_id, geo_level, geo_name,
+            period_start and grain (extra columns are ignored).
+        db_path: Database file. Defaults to ``config.DB_PATH``.
+
+    Returns:
+        The number of rows deleted.
+    """
+    if keys.empty:
+        return 0
+    frame = keys[["signal_id", "geo_level", "geo_name", "period_start", "grain"]].copy()
+    frame["period_start"] = pd.to_datetime(frame["period_start"]).dt.strftime("%Y-%m-%d")
+    with get_connection(db_path) as conn:
+        before = conn.total_changes
+        conn.executemany(
+            """DELETE FROM signals WHERE signal_id = ? AND geo_level = ? AND geo_name = ?
+                      AND period_start = ? AND grain = ?""",
+            [tuple(row) for row in frame.itertuples(index=False, name=None)],
+        )
+        return conn.total_changes - before
+
+
 # ---------------------------------------------------------------------------
 # scrapes
 # ---------------------------------------------------------------------------

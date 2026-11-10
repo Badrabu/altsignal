@@ -274,7 +274,7 @@ def week_start(day: date) -> date:
 def weekly_counts(
     postings: pd.DataFrame,
     state_name: str,
-    metro_names: list[str],
+    metros: list[config.Metro],
     observed_days: set[date],
 ) -> pd.DataFrame:
     """Count postings per week, metro and sector as ``signals`` rows.
@@ -290,7 +290,8 @@ def weekly_counts(
     Args:
         postings: Deduplicated postings (``POSTING_COLUMNS``).
         state_name: Full state name (geo_name of the state-level total).
-        metro_names: All metros of the state.
+        metros: All metros of the state. Postings carry the metro ``name``;
+            the signals use ``geo_name`` (which includes the state).
         observed_days: Dates on which a scrape ran.
 
     Returns:
@@ -323,7 +324,8 @@ def weekly_counts(
             "grain": "weekly",
         }
         state_total = 0
-        for metro in metro_names:
+        for metro_obj in metros:
+            metro, geo = metro_obj.name, metro_obj.geo_name
             metro_total = 0
             for (m, sector) in pairs:
                 if m != metro:
@@ -331,26 +333,28 @@ def weekly_counts(
                 value = counts.get((week, m, sector), 0)
                 metro_total += value
                 records.append({**base, "signal_id": f"indeed_postings_{sector_slug(sector)}",
-                                "geo_level": "metro", "geo_name": metro, "value": value})
+                                "geo_level": "metro", "geo_name": geo, "value": value})
             state_total += metro_total
             records.append({**base, "signal_id": "indeed_postings_total",
-                            "geo_level": "metro", "geo_name": metro, "value": metro_total})
+                            "geo_level": "metro", "geo_name": geo, "value": metro_total})
         records.append({**base, "signal_id": "indeed_postings_total",
                         "geo_level": "state", "geo_name": state_name, "value": state_total})
 
     return add_normalized_values(pd.DataFrame(records))
 
 
-def observed_scrape_days(today: date) -> set[date]:
-    """List the days on which an Indeed scrape finished (plus today).
+def observed_scrape_days(today: date | None = None) -> set[date]:
+    """List the days on which an Indeed scrape finished.
 
     Args:
-        today: The date of the current run (counts as observed).
+        today: The date of a run that is still in progress. It counts as
+            observed because its scrapes row is only written at the end. Leave
+            it out to use the scrape log alone.
 
     Returns:
         A set of UTC dates.
     """
-    days = {today}
+    days = {today} if today is not None else set()
     log = db.read_scrapes(source=config.SOURCE_INDEED)
     log = log[log["status"].isin([db.STATUS_SUCCESS, db.STATUS_PARTIAL])]
     for stamp in log["finished_at"].dropna():
@@ -405,7 +409,7 @@ def ingest(state: str | None = None, session=None, max_pages: int | None = None,
         save_postings(info.abbr, new_postings)
         all_postings = pd.concat([existing, new_postings], ignore_index=True)
 
-        rows = weekly_counts(all_postings, info.name, [m.name for m in info.metros],
+        rows = weekly_counts(all_postings, info.name, list(info.metros),
                              observed_scrape_days(today))
         db.write_signals(rows)
         result.rows_returned = len(new_postings)

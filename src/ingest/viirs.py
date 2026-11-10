@@ -201,7 +201,7 @@ def build_signal_rows(kept: pd.DataFrame, geo_level: str, geo_name: str) -> pd.D
     Args:
         kept: Months that passed ``select_valid_months``.
         geo_level: "metro" or "state".
-        geo_name: Place name, e.g. "Los Angeles" or "California".
+        geo_name: Place name, e.g. "Los Angeles, CA" or "California".
 
     Returns:
         A DataFrame of signal rows.
@@ -240,7 +240,7 @@ def ingest(state: str | None = None, ee=None, start_date: str | None = None) -> 
         start = start_date or config.VIIRS_START_DATE
 
         # (geo_level, geo_name, counties or None for the whole state)
-        areas = [("metro", m.name, list(m.counties)) for m in info.metros]
+        areas = [("metro", m.geo_name, list(m.counties)) for m in info.metros]
         areas.append(("state", info.name, None))
 
         frames, errors, dropped_notes = [], {}, []

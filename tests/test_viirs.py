@@ -81,7 +81,7 @@ def test_ingest_success_stores_rows_and_skips_dropped_month(monkeypatch):
     result = viirs.ingest("Wyoming", ee=FakeEE(), start_date="2023-01-01")
     assert result.status == "success"
     assert result.metro_coverage == 1.0
-    rows = db.read_signals(source="viirs", geo_name="Cheyenne")
+    rows = db.read_signals(source="viirs", geo_name="Cheyenne, WY")
     assert len(rows) == 13
     assert "2024-02-01" not in set(rows["period_start"])
     assert pd.notna(rows["normalized_value"].iloc[-1])

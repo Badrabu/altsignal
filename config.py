@@ -301,11 +301,15 @@ class Metro:
         name: Metro name, e.g. "Los Angeles". Used as ``geo_name`` in the DB.
         counties: Principal county names used for the VIIRS aggregation.
         indeed_location: Search text for Indeed, e.g. "Los Angeles, CA".
+        geo_name: Name stored in the ``signals`` table, e.g. "Los Angeles, CA".
+            The state is included because metro names repeat across states
+            (Springfield MA/MO, Portland ME/OR, ...).
     """
 
     name: str
     counties: tuple[str, ...]
     indeed_location: str
+    geo_name: str
 
 
 @dataclass(frozen=True)
@@ -350,6 +354,7 @@ def get_state_info(state: str | None = None) -> StateInfo:
                         name=metro_name,
                         counties=tuple(counties),
                         indeed_location=f"{metro_name}, {abbr}",
+                        geo_name=f"{metro_name}, {abbr}",
                     )
                     for metro_name, counties in metros
                 ),
@@ -401,7 +406,19 @@ ALL_SOURCES = (
 
 # Rolling window used for each signal's z-score (number of periods).
 # Spec: "rolling 12-month baseline"; weekly series use 52 weeks (~12 months).
-ZSCORE_WINDOW = {"monthly": 12, "weekly": 52}
+# Quarterly series (none yet) use 4 quarters = 12 months.
+ZSCORE_WINDOW = {"monthly": 12, "weekly": 52, "quarterly": 4}
+# Fewest OBSERVED periods the baseline window must contain for a z-score to be
+# computed. One missing period is tolerated (monthly: 11 of 12, weekly: 51 of
+# 52); two or more leave the z-score empty. Nothing is imputed or filled: the
+# baseline mean and standard deviation use only the observed periods. Reason:
+# the BLS published no unemployment release for October 2025 (federal
+# shutdown), and under a strict "every baseline month present" rule that single
+# hole emptied every z-score for the following 12 months. Quarterly keeps its
+# full 4 (a missing quarter is 25% of the baseline; no quarterly source exists).
+# The window must also be entirely inside the series' history, so a series
+# still needs a full window of months before its first z-score.
+BASELINE_MIN_PERIODS = {"monthly": 11, "weekly": 51, "quarterly": 4}
 
 # --- Census MSRS -----------------------------------------------------------
 MSRS_BASE_URL = "https://www.census.gov/retail/mrts/www/statedata"
@@ -458,3 +475,26 @@ FRED_TARGET_SERIES = {
 # real series is confirmed.
 CARD_SPENDING_SERIES_ID = os.environ.get("CARD_SPENDING_SERIES_ID") or None
 CARD_SPENDING_UNIT = "index"
+
+# --- Phase two: cleaning and alignment ------------------------------------
+# Plausible range per unit: (lowest, highest); None = no limit on that side.
+# Values outside the range are DROPPED (never "fixed") and counted in the
+# build report. Ranges are deliberately loose: they catch broken data (a
+# negative job count, an unemployment rate of 400%), not unusual-but-real data.
+PLAUSIBLE_RANGE = {
+    "percent": (0.0, 100.0),          # e.g. unemployment rate
+    "percent_yoy": (-100.0, None),    # a level cannot fall by more than 100%
+    "postings": (0.0, None),
+    "nW/cm2/sr": (0.0, None),         # radiance
+    "millions_usd": (0.0, None),
+    "index": (None, None),
+}
+# Sources whose values are official published numbers with nothing imputed on
+# our side; their quality_score is 1.0 when the source gives none.
+OFFICIAL_SOURCES = (SOURCE_FRED_TARGETS, SOURCE_FRED_CARD)
+# Months in which Indeed was scraped on less than this share of days are kept
+# (with their low quality_score) but excluded from z-score baselines, so a
+# 9-day count is never compared with a full-month count.
+INDEED_MIN_MONTH_COVERAGE = 0.8
+# Per-source minimum quality_score for a row to take part in the z-score.
+MIN_QUALITY_FOR_ZSCORE = {SOURCE_INDEED: INDEED_MIN_MONTH_COVERAGE}

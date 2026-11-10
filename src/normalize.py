@@ -6,13 +6,21 @@ a z-score against that signal's OWN trailing baseline:
 
     z_t = (x_t - mean of previous N periods) / std of previous N periods
 
-where N is 12 for monthly series (12 months) and 52 for weekly series.
+where N is 12 for monthly series (12 months), 52 for weekly series and 4 for
+quarterly series (all about 12 months).
 
 Rules (from the project spec):
     * The baseline uses only PAST periods (not the current one), so a z-score
       never uses information from the future.
-    * Missing periods are never filled in. If any of the N baseline periods is
-      missing, the z-score is left empty (None).
+    * Missing periods are never filled in. The mean and standard deviation use
+      only the observed baseline periods. At most ONE of the N baseline periods
+      may be missing (``config.BASELINE_MIN_PERIODS``: 11 of 12 months, 51 of 52
+      weeks); with two or more missing the z-score is left empty (None). The
+      baseline window must also lie inside the series' history, so the first N
+      periods of a series never get a z-score.
+    * Why one gap is tolerated: the BLS published no unemployment release for
+      October 2025, and requiring every baseline month emptied 12 months of
+      z-scores after that single hole.
 """
 
 from __future__ import annotations
@@ -22,8 +30,8 @@ import pandas as pd
 import config
 
 # pandas frequency codes for each grain. Monthly periods start on the 1st;
-# weekly periods start on Monday.
-_FREQ = {"monthly": "MS", "weekly": "W-MON"}
+# weekly periods start on Monday; quarterly on the 1st of Jan/Apr/Jul/Oct.
+_FREQ = {"monthly": "MS", "weekly": "W-MON", "quarterly": "QS"}
 
 
 def rolling_zscore(values: pd.Series, grain: str) -> pd.Series:
@@ -32,7 +40,7 @@ def rolling_zscore(values: pd.Series, grain: str) -> pd.Series:
     Args:
         values: A series indexed by period start date (``DatetimeIndex``),
             holding raw values. Missing periods may simply be absent.
-        grain: "monthly" or "weekly". Sets the baseline length.
+        grain: "monthly", "weekly" or "quarterly". Sets the baseline length.
 
     Returns:
         A series with the same index as ``values``. Entries are NaN where
@@ -44,6 +52,7 @@ def rolling_zscore(values: pd.Series, grain: str) -> pd.Series:
     if grain not in config.ZSCORE_WINDOW:
         raise ValueError(f"Unsupported grain {grain!r}; use one of {list(config.ZSCORE_WINDOW)}")
     window = config.ZSCORE_WINDOW[grain]
+    min_periods = config.BASELINE_MIN_PERIODS[grain]
 
     series = values.copy()
     series.index = pd.to_datetime(series.index)
@@ -55,9 +64,14 @@ def rolling_zscore(values: pd.Series, grain: str) -> pd.Series:
     full_index = pd.date_range(series.index.min(), series.index.max(), freq=_FREQ[grain])
     on_calendar = series.reindex(full_index)
 
-    baseline = on_calendar.shift(1).rolling(window=window, min_periods=window)
+    # Observed periods only: pandas skips NaN when averaging, so a tolerated gap
+    # shrinks the sample instead of being filled.
+    baseline = on_calendar.shift(1).rolling(window=window, min_periods=min_periods)
     std = baseline.std()
     z = (on_calendar - baseline.mean()) / std.where(std > 0)
+    # The window must lie inside the series' history: a short history is not a
+    # "gap", and the first `window` periods never get a z-score.
+    z.iloc[:window] = float("nan")
     return z.reindex(series.index)
 
 

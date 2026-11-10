@@ -98,6 +98,21 @@ and run `python -m src.ingest.viirs`.
 
 ## Phase two notes
 
+* **Rule change (decided by the user after the real FRED run): one missing
+  month in a z-score baseline is tolerated.** The BLS published no unemployment
+  release for October 2025 (federal shutdown), so CAUR and UNRATE have no value for
+  that month. Under the original rule (all 12 baseline months required) that single
+  hole emptied every FRED z-score from Nov 2025 to Oct 2026 and, through the
+  features built on them, left no model fittable or scorable. The baseline now needs
+  at least `config.BASELINE_MIN_PERIODS` observed periods (monthly 11 of 12, weekly
+  51 of 52); the statistics use observed periods only; nothing is imputed; two
+  missing periods still give no z-score; the series' first 12 periods still have
+  none. The rule is uniform across sources, and the Indeed under-80%-days
+  exclusion is unchanged (an excluded month counts as one missing month). It
+  changes z-scores of any series with an isolated gap (for example MSRS subsectors
+  with suppressed months), so results computed before the change are not
+  comparable.
+
 * Verified on real data: `python -m src.process.build_signals` on a database
   holding real MSRS (California) and real Indeed postings gives MSRS 1,065 rows
   with z-scores and quality scores, and Indeed monthly rows; a second run

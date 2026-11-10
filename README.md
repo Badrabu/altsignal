@@ -84,9 +84,16 @@ What it does, per source:
    repeated across their months and tagged `grain = "quarterly_repeated"`; no
    current source needs this yet.
 4. **Normalizes**: `normalized_value` = z-score against the series' own previous
-   12 months (empty until 12 months of history exist). Indeed months scraped on
-   fewer than 80% of their days (`config.INDEED_MIN_MONTH_COVERAGE`) get no
-   z-score and are left out of baselines.
+   12 months (empty until 12 months of history exist). **One missing month in the
+   baseline is tolerated** (`config.BASELINE_MIN_PERIODS`: 11 of 12 months, 51 of
+   52 weeks): the mean and standard deviation use only the observed months,
+   nothing is imputed or filled, and two or more missing months leave the z-score
+   empty. The rule is the same for every source. Why: the BLS published no
+   unemployment release for October 2025 (federal shutdown), and requiring every
+   baseline month emptied all FRED z-scores for the following 12 months. Indeed
+   months scraped on fewer than 80% of their days
+   (`config.INDEED_MIN_MONTH_COVERAGE`) still get no z-score and are left out of
+   baselines (they count as missing months, so at most one may fall in a window).
 5. **Reports** per source: `built`, `no data` (not ingested yet, e.g. VIIRS or
    FRED without credentials), `skipped` (optional card spending) or `error`.
 
@@ -112,7 +119,8 @@ Four SQLite tables (`src/db.py`, the only module that touches the database):
 Every signal row has the raw `value` and a `normalized_value`: a z-score
 against that signal's own trailing baseline (previous 12 months; 52 weeks for
 weekly series). The baseline excludes the current period, and a z-score is left
-empty when the baseline has gaps; nothing is ever imputed. Raw values of
+empty when the baseline has two or more missing periods (one is tolerated and the
+statistics use the observed periods only); nothing is ever imputed. Raw values of
 different signals are never compared directly. The `grain` column tags each
 row `monthly` or `weekly`.
 

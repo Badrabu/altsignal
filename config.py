@@ -408,6 +408,17 @@ ALL_SOURCES = (
 # Spec: "rolling 12-month baseline"; weekly series use 52 weeks (~12 months).
 # Quarterly series (none yet) use 4 quarters = 12 months.
 ZSCORE_WINDOW = {"monthly": 12, "weekly": 52, "quarterly": 4}
+# Fewest OBSERVED periods the baseline window must contain for a z-score to be
+# computed. One missing period is tolerated (monthly: 11 of 12, weekly: 51 of
+# 52); two or more leave the z-score empty. Nothing is imputed or filled: the
+# baseline mean and standard deviation use only the observed periods. Reason:
+# the BLS published no unemployment release for October 2025 (federal
+# shutdown), and under a strict "every baseline month present" rule that single
+# hole emptied every z-score for the following 12 months. Quarterly keeps its
+# full 4 (a missing quarter is 25% of the baseline; no quarterly source exists).
+# The window must also be entirely inside the series' history, so a series
+# still needs a full window of months before its first z-score.
+BASELINE_MIN_PERIODS = {"monthly": 11, "weekly": 51, "quarterly": 4}
 
 # --- Census MSRS -----------------------------------------------------------
 MSRS_BASE_URL = "https://www.census.gov/retail/mrts/www/statedata"

@@ -230,6 +230,12 @@ def store_results(report: dict, state_abbr: str) -> tuple[int, int]:
     """
     db.init_db()
     target = report["target"]
+    # A rerun replaces this state's results for the target: models (or metrics
+    # and forecast months) that this run no longer produces must not linger.
+    existing = db.read_models()
+    old_ids = existing.loc[(existing["target"] == target) & existing["model_id"].str.startswith(f"{state_abbr}_{target}_"),
+                           "model_id"].unique().tolist()
+    db.delete_models(old_ids)
     metric_rows, forecast_rows = [], []
     for name, entry in report["models"].items():
         mid = model_id(state_abbr, target, name)

@@ -274,3 +274,36 @@ def test_format_report_handles_unscored_models():
               "models": {"naive_locf": {"kind": "naive", "MAE": None, "RMSE": None}}}
     text = rm.format_report(report)
     assert "n/a" in text and "0 of 6 months scored" in text
+
+
+def test_rerun_removes_models_and_forecasts_no_longer_produced():
+    """A model that a rerun does not produce (e.g. no longer fitted) disappears; other targets stay."""
+    table, b = make_table(unlabeled=2)
+    report = run_with(table, b)
+    rm.store_results(report, "CA")
+    other = {**report, "target": "unemployment",
+             "models": {k: dict(v) for k, v in report["models"].items()}}
+    rm.store_results(other, "CA")
+    assert {"CA_retail_sales_ridge", "CA_retail_sales_tree"} <= set(db.read_models()["model_id"])
+
+    rerun = {**report, "models": {k: v for k, v in report["models"].items() if v["kind"] == "naive"},
+             "_predictions": {k: v for k, v in report["_predictions"].items() if k.startswith("naive")}}
+    rm.store_results(rerun, "CA")
+    models, forecasts = db.read_models(), db.read_forecasts()
+    retail = models[models["target"] == "retail_sales"]
+    assert set(retail["model_id"]) == {"CA_retail_sales_naive_locf", "CA_retail_sales_naive_seasonal"}
+    assert not forecasts["model_id"].isin(["CA_retail_sales_ridge", "CA_retail_sales_tree"]).any()
+    assert {"CA_unemployment_ridge", "CA_unemployment_tree"} <= set(models["model_id"])     # other target untouched
+    assert forecasts["model_id"].isin(["CA_unemployment_ridge"]).any()
+
+
+def test_rerun_drops_forecast_months_no_longer_produced():
+    """Forecast months of a model that are not produced any more are removed, not left behind."""
+    table, b = make_table(unlabeled=2)
+    report = run_with(table, b)
+    rm.store_results(report, "CA")
+    assert len(db.read_forecasts("CA_retail_sales_ridge")) == 8
+    last = max(report["_predictions"]["ridge"].index)
+    report["_predictions"]["ridge"] = report["_predictions"]["ridge"].drop(last)
+    rm.store_results(report, "CA")
+    assert len(db.read_forecasts("CA_retail_sales_ridge")) == 7

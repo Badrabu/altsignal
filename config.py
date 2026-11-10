@@ -591,3 +591,18 @@ MEANINGFUL_MARGIN = 0.10
 # cross-validation inside the TRAINING window (never the test set), its RMSE is
 # lower than that of the best naive benchmark on the same validation months.
 GRADIENT_BOOSTING_REQUIRES_RIDGE_CV_BEATS_NAIVE = True
+
+# Model settings (set before results were computed; see README, "Phase four").
+# Columns with more than this share of missing TRAINING values are not used;
+# training rows that are still incomplete are dropped (nothing is imputed).
+MODEL_MAX_MISSING_SHARE = 0.5
+# Cross-validation INSIDE the training window: expanding window, this many
+# folds, each validating on this many months. A gap (derived from the target's
+# release lag) keeps labels that were not yet public out of the training part.
+MODEL_CV_FOLDS = 5
+MODEL_CV_VALIDATION_MONTHS = 6
+MODEL_MIN_TRAIN_ROWS_FIRST_FOLD = 18
+MODEL_RANDOM_STATE = 0
+RIDGE_ALPHAS = [10 ** (e / 4) for e in range(-8, 17)]          # 0.01 ... 10,000
+TREE_GRID = {"max_depth": [2, 3], "min_samples_leaf": [3, 5, 8]}
+GBM_GRID = {"n_estimators": [50, 100], "max_depth": [1, 2], "learning_rate": [0.05]}

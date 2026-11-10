@@ -22,6 +22,7 @@ def isolated_storage(tmp_path, monkeypatch):
     """
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(config, "RAW_DIR", tmp_path / "raw")
+    monkeypatch.setattr(config, "PROCESSED_DIR", tmp_path / "processed")
     monkeypatch.setattr(config, "INDEED_POSTINGS_DIR", tmp_path / "raw" / "indeed")
     monkeypatch.setattr(config, "STATE", "California")
     return config.DB_PATH

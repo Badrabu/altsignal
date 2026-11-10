@@ -498,3 +498,57 @@ OFFICIAL_SOURCES = (SOURCE_FRED_TARGETS, SOURCE_FRED_CARD)
 INDEED_MIN_MONTH_COVERAGE = 0.8
 # Per-source minimum quality_score for a row to take part in the z-score.
 MIN_QUALITY_FOR_ZSCORE = {SOURCE_INDEED: INDEED_MIN_MONTH_COVERAGE}
+
+# --- Phase three: feature engineering -------------------------------------
+# A nowcast for target month T is made on the day after T ends
+# (``PREDICTION_OFFSET_DAYS`` after the last day of T). Only observations that
+# had ALREADY BEEN PUBLISHED by then may be used.
+PREDICTION_OFFSET_DAYS = 1
+
+# Days between the end of an observation's period and the day it becomes
+# public. Looked up by signal_id first, then by source. A series with no entry
+# here is NOT used (we never guess a release lag). The values are deliberately
+# on the conservative (longer) side: too long loses a little information, too
+# short would leak the future.
+RELEASE_LAG_DAYS = {
+    # Census MSRS: the release schedule (msrs_release_schedule.pdf) shows lags of
+    # 81-114 days after the end of the data month.
+    SOURCE_MSRS: 115,
+    # Own daily scrape of Indeed: a month is complete the day after it ends.
+    SOURCE_INDEED: 1,
+    # VIIRS monthly composites: ASSUMED ~3 months; not verified (no Earth
+    # Engine access yet, see blockers.md).
+    SOURCE_VIIRS: 90,
+    # BLS state unemployment (LAUS) comes out about 3 weeks after month end.
+    "fred_unemployment_rate_state": 30,
+    # BLS national unemployment: first Friday of the next month (at most ~7 days).
+    "fred_unemployment_rate_national": 14,
+    # Census advance retail sales: about the 15th of the next month.
+    "fred_retail_sales_national": 21,
+    # Card spending: ASSUMED; only matters if a series is configured.
+    SOURCE_FRED_CARD: 45,
+}
+
+# Which series become features: monthly rows at these geography levels only
+# (metro-level series would multiply the columns; use them in a later phase).
+FEATURE_GEO_LEVELS = ("state", "national")
+# Lags, changes and rolling windows (in months) built on the normalized series.
+FEATURE_LAGS = (1, 2, 3)
+FEATURE_CHANGES = (1, 3)
+FEATURE_ROLLING_WINDOWS = (3, 6)
+# Series whose coverage (quality_score x 100) becomes a feature too.
+COVERAGE_FEATURE_SOURCES = (SOURCE_VIIRS,)
+
+# Targets to nowcast: name -> candidate (signal_id, geo_level), first one with
+# data wins (state unemployment, then national as the fallback).
+FEATURE_TARGETS = {
+    "retail_sales": [("msrs_yoy_TOTAL", "state")],
+    "unemployment": [("fred_unemployment_rate_state", "state"),
+                     ("fred_unemployment_rate_national", "national")],
+}
+
+# Train/test split: the last TEST_MONTHS months with an observed target are the
+# true test set. The boundary is frozen in a file the first time it is defined.
+TEST_MONTHS = 6
+# Refuse to define a split with fewer labelled months than this before the test set.
+MIN_TRAIN_MONTHS = 24

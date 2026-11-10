@@ -1,6 +1,6 @@
 # Blockers
 
-_Status after phase two: no new blockers. The three items below are unchanged; phase two for VIIRS and FRED is implemented and unit-tested against fixtures/mocks only._
+_Status after phase three: no new blockers. The three items below are unchanged; phases two and three for VIIRS and FRED are implemented and unit-tested against fixtures/mocks only._
 
 # Phase one blockers
 
@@ -126,6 +126,35 @@ and run `python -m src.ingest.viirs`.
   `config.py`, `ingest/indeed.py` and `ingest/viirs.py`; old rows with the
   previous names in an existing database are ignored by the build and can be
   deleted.
+
+## Phase three notes
+
+* Verified on real data: `python -m src.features.build_features` on the real
+  California MSRS series gave 94 rows (84 train, 6 test = Jan-Jun 2026, 4
+  unlabeled months to nowcast) and 130 features, and a rerun produced
+  byte-identical files. Unemployment reports "no data" (FRED blocked) and all
+  Indeed features are empty (only one scrape day, no 12-month z-score yet).
+* **Release lags are my estimates.** MSRS (115 days) comes from the Census
+  release schedule; the VIIRS lag (90 days) is an unverified assumption until
+  Earth Engine access exists; BLS/Census lags are typical release timing. All
+  are on the cautious side and live in `config.RELEASE_LAG_DAYS`.
+* **Revision look-ahead in FRED.** `fredapi` `get_series` returns the latest
+  revised values, so official series (unemployment, retail sales) are not exactly
+  what was known on the prediction date. Fixing this needs vintage data
+  (`fredapi` offers `get_series_first_release` / `get_series_as_of_date`), which
+  I cannot test without an API key. Phase four should consider it before
+  reporting backtest results.
+* **Feature/split revision (after phase four found no model beat naive).** Added,
+  on first-principles grounds and without looking at test-set results: the
+  target's own published history (`target_hist__*`, release-lag respecting) and a
+  configurable `TRAIN_START` (default 2022-01-01) that excludes the 2020-21
+  pandemic months from fitting (rows kept as `pre_window`; signals table
+  untouched). The frozen test window is unchanged (California: 2026-01 to
+  2026-06), now 48 train / 36 pre_window / 6 test rows. Caveat: 48 training
+  months is small, and early-2022 z-scores still have a 2021 baseline. Whether
+  this helps is for phase four to measure; I did not evaluate models.
+* MSRS can also be revised after first release, and only the current vintage is
+  stored, so it carries the same kind of (smaller, unquantified) revision risk.
 
 ## Decisions to review (not blockers)
 

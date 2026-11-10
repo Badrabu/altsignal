@@ -9,7 +9,7 @@ snapshot holds, for the active state only:
 * ``signals``: state-level and national monthly rows of the sources listed in
   ``config.DEMO_EXPORT_SOURCES`` (public data only: Census MSRS, VIIRS, FRED
   official series). **Indeed is never exported** (scraped data, non-commercial
-  use only) and neither is the card spending index (third-party terms).
+  use only).
 * ``models`` and ``forecasts``: the rows of that state's models.
 
 The ``scrapes`` table is not exported. All reading and writing goes through

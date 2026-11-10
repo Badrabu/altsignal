@@ -223,16 +223,6 @@ def test_series_without_a_release_lag_are_skipped_not_guessed():
     assert not any(c.startswith("mystery") for c in result.table.columns)
 
 
-def test_card_spending_is_optional_and_used_when_present():
-    """No card column without data; with data it appears with its assumed lag."""
-    without = build(make_signals())
-    assert not any(c.startswith("card_spending") for c in without.table.columns)
-    card = series_rows("card_spending_index", "fred_card", "index", "national", "United States", 90, seed=8)
-    with_card = build(pd.concat([make_signals(), card], ignore_index=True))
-    assert "card_spending_index.national__z" in with_card.table.columns
-    assert with_card.series_used["card_spending_index.national"] == config.RELEASE_LAG_DAYS["fred_card"]
-
-
 def test_metro_series_are_not_features_by_default():
     """Only state and national series enter the table."""
     metro = series_rows("viirs_avg_radiance", "viirs", "nW/cm2/sr", "metro", "Los Angeles, CA", 90, seed=9, quality=0.9)

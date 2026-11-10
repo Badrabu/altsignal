@@ -1,9 +1,7 @@
 """Tests for src/ingest/msrs.py using small made-up CSV files (test fixtures)."""
 
 import pandas as pd
-import pytest
 
-import config
 from src import db
 from src.ingest import msrs
 from tests.fakes import FakeResponse, FakeSession

@@ -31,9 +31,6 @@ SOURCE_CATALOGUE = [
     {"source": config.SOURCE_VIIRS, "title": "VIIRS nighttime lights",
      "no_data": ("No VIIRS data yet. It needs a free Google Earth Engine project and credentials "
                  "(blocked so far, see blockers.md).")},
-    {"source": config.SOURCE_FRED_CARD, "title": "Card spending index (national cross-check)",
-     "no_data": ("No card spending data yet. No verified FRED series ID exists for the SF Fed card "
-                 "spending index (see blockers.md).")},
     {"source": config.SOURCE_FRED_TARGETS, "title": "Official targets from FRED",
      "no_data": ("No FRED data yet. Run `python -m src.ingest.fred` with a free `FRED_API_KEY` "
                  "(not in this database, see the README).")},
@@ -185,7 +182,6 @@ def signal_label(signal_id: str) -> str:
     fixed = {
         "viirs_avg_radiance": "Nighttime lights: average radiance",
         "indeed_postings_total": "Indeed postings: total",
-        "card_spending_index": "Card spending index",
         "fred_unemployment_rate_state": "Unemployment rate (state)",
         "fred_unemployment_rate_national": "Unemployment rate (national)",
         "fred_retail_sales_national": "Retail sales (national)",

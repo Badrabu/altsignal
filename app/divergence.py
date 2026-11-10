@@ -29,7 +29,7 @@ NO_OVERLAP, AGREE, NEUTRAL, DIVERGE = "no overlap", "agree", "neutral", "diverge
 TREND_LOOKBACK_MONTHS = 3
 
 # One headline series per source for the across-source comparison.
-HEADLINE_SIGNALS = ["msrs_yoy_TOTAL", "indeed_postings_total", "viirs_avg_radiance", "card_spending_index"]
+HEADLINE_SIGNALS = ["msrs_yoy_TOTAL", "indeed_postings_total", "viirs_avg_radiance"]
 REFERENCE_SIGNAL = "msrs_yoy_TOTAL"
 
 

@@ -6,9 +6,8 @@ from datetime import date
 import pandas as pd
 
 import config
-from src import db
 from src.features import build_features as bf, split as sp
-from tests.helpers import series_rows, write_series
+from tests.helpers import write_series
 
 TODAY = date(2026, 11, 10)
 

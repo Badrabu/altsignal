@@ -26,7 +26,7 @@ def test_unknown_state_raises():
 
 def test_every_state_is_complete_and_unique():
     """All 50 states + DC have a unique abbreviation/FIPS and at least one metro."""
-    names = config.list_states()
+    names = sorted(config._STATE_TABLE)
     assert len(names) == 51
     infos = [config.get_state_info(n) for n in names]
     assert len({i.abbr for i in infos}) == 51

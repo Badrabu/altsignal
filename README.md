@@ -41,7 +41,7 @@ python -m pytest                       # unit tests (no network or keys needed)
 python -m src.ingest.msrs              # Census MSRS (no key needed)
 python -m src.ingest.indeed            # Indeed (needs the local scraper, below)
 python -m src.ingest.viirs             # VIIRS (needs Earth Engine, below)
-python -m src.ingest.fred              # FRED: official targets + card spending
+python -m src.ingest.fred              # FRED: official targets (unemployment, retail sales)
 python -m src.ingest.run_all           # everything, then the staleness check
 python -m src.ingest.staleness         # only the 48-hour staleness check
 
@@ -95,9 +95,7 @@ What it does, per source:
 3. **Aligns to monthly** (`src/process/align.py`). Native monthly sources are
    untouched. Indeed postings are re-counted per calendar month (same
    `signal_id` as the weekly series, `grain = "monthly"`; the weekly rows remain
-   with `grain = "weekly"`). Series published less often than monthly would be
-   repeated across their months and tagged `grain = "quarterly_repeated"`; no
-   current source needs this yet.
+   with `grain = "weekly"`).
 4. **Normalizes**: `normalized_value` = z-score against the series' own previous
    12 months (empty until 12 months of history exist). **One missing month in the
    baseline is tolerated** (`config.BASELINE_MIN_PERIODS`: 11 of 12 months, 51 of
@@ -109,8 +107,8 @@ What it does, per source:
    months scraped on fewer than 80% of their days
    (`config.INDEED_MIN_MONTH_COVERAGE`) still get no z-score and are left out of
    baselines (they count as missing months, so at most one may fall in a window).
-5. **Reports** per source: `built`, `no data` (not ingested yet, e.g. VIIRS or
-   FRED without credentials), `skipped` (optional card spending) or `error`.
+5. **Reports** per source: `built`, `no data` (not ingested yet, e.g. VIIRS
+   without Earth Engine access) or `error`.
 
 The command exits 0 if at least one source was built and nothing is wrong.
 Missing-credential sources are reported, not treated as failures.
@@ -141,7 +139,7 @@ Scores are features, not filters, and are **not comparable across sources**.
 
 Targets: `retail_sales` (Census MSRS total retail, state) and `unemployment`
 (state rate, falling back to the national rate). A target with no data yet
-(unemployment, until FRED credentials exist) is reported and skipped. Re-running
+(for example unemployment before the FRED ingest has run) is reported and skipped. Re-running
 with unchanged inputs rewrites identical files (idempotent).
 
 ### No look-ahead: prediction time and release lags
@@ -159,7 +157,6 @@ calendar month:
 | VIIRS | 90 (**assumed**, unverified) | about 3 months old |
 | State / national unemployment | 30 / 14 | month T-1 |
 | National retail sales (FRED) | 21 | month T-1 |
-| Card spending (optional) | 45 (assumed) | only if a series is configured |
 
 Lags are on the cautious side (a too-long lag loses a little information, a
 too-short one leaks the future). A series with no configured lag is skipped, not
@@ -359,8 +356,7 @@ Caveats:
 ### Current results: real FRED and Census data (California)
 
 **What was run.** `python -m src.ingest.fred` (`CAUR`, `UNRATE`, `RSAFS`; the
-`fred_targets` scrape logged `success`, 1,970 rows; the optional card spending
-source is skipped because no series ID exists), `python -m src.ingest.msrs`,
+`fred_targets` scrape logged `success`, 1,970 rows), `python -m src.ingest.msrs`,
 `build_signals`, `build_features`, `run_models`, all from a fresh database. The
 pre-committed rules were not touched: the naive benchmarks, the 10% margin, the
 gradient-boosting gate and the frozen test split. Two changes were forced by the
@@ -489,8 +485,8 @@ and has three tabs. It only reads data, and only through `src/db.py`.
    plain-language summary is generated from the numbers by deterministic Python
    rules (same data, same text), **not by an LLM**.
 
-**No data yet, never fake data.** A source that is blocked or empty (FRED, VIIRS,
-card spending, and Indeed while it has little history) is shown with a clear
+**No data yet, never fake data.** A source that is blocked or empty (VIIRS, and Indeed
+while it has little history) is shown with a clear
 "No data yet" message that says why. Nothing is imputed, interpolated or carried
 forward; a missing month stays a gap in the charts; a series with fewer than 12
 months of history has no z-score and is shown without one. With the committed
@@ -522,8 +518,7 @@ it from your live database, for the active state only:
   Today that is **MSRS (California)** and the real **FRED** official series
   (state and national), both public data.
 * `models` and `forecasts` of that state.
-* **Not exported:** the `scrapes` log, metro rows, the weekly grain, the card
-  spending index (third-party terms) and **all Indeed data** (scraped,
+* **Not exported:** the `scrapes` log, metro rows, the weekly grain and **all Indeed data** (scraped,
   non-commercial use only). If you ever add Indeed data to a public demo, keep the
   disclaimer shown in the app and read Indeed's terms first; the exporter does not
   include it, and a test checks that the committed file contains only allowed
@@ -585,7 +580,6 @@ row `monthly` or `weekly`.
 | Indeed | `indeed_postings_<sector>`, `indeed_postings_total` | weekly | New unique postings per metro and sector (see caveats). `quality_score` = share of the week's days scraped. |
 | VIIRS | `viirs_avg_radiance` | monthly | Mean radiance per metro and for the state; `quality_score` = share of pixels with adequate coverage; months with more than 20% low-coverage pixels are dropped. |
 | FRED targets | `fred_unemployment_rate_state`, `fred_unemployment_rate_national`, `fred_retail_sales_national` | monthly | Official numbers to be nowcast later. |
-| FRED card spending | `card_spending_index` | monthly | National cross-check only. Optional: needs a configured series ID (see `blockers.md`); the build skips it when absent. |
 
 Metro rows are named with their state (`Springfield, MA`) because metro names
 repeat across states; the database can therefore hold several states at once,

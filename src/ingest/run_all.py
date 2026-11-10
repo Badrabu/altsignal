@@ -34,7 +34,6 @@ def run_all() -> tuple[list[ScrapeResult], list[staleness.StaleSource]]:
         msrs.ingest(),
         indeed.ingest(),
         viirs.ingest(),
-        fred.ingest_card_spending(),
         fred.ingest_targets(),
     ]
     stale = staleness.check_staleness()

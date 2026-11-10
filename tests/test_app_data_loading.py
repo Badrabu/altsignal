@@ -65,7 +65,7 @@ def test_source_status_marks_missing_sources_as_no_data():
     signals = dl.load_signals("California", config.DB_PATH)
     status = dl.source_status(signals).set_index("source")
     assert bool(status.loc[config.SOURCE_MSRS, "has_data"]) and status.loc[config.SOURCE_MSRS, "n_series"] == 1
-    for source in (config.SOURCE_INDEED, config.SOURCE_VIIRS, config.SOURCE_FRED_CARD, config.SOURCE_FRED_TARGETS):
+    for source in (config.SOURCE_INDEED, config.SOURCE_VIIRS, config.SOURCE_FRED_TARGETS):
         assert not status.loc[source, "has_data"] and status.loc[source, "rows"] == 0
         assert status.loc[source, "no_data"]                      # a reason is always given
     assert pd.isna(status.loc[config.SOURCE_VIIRS, "latest_period"])
@@ -138,14 +138,13 @@ def test_export_demo_copies_only_public_active_state_data(tmp_path):
     write_series("msrs_yoy_TOTAL", "msrs", "percent_yoy", "state", "California", 14)
     write_series("msrs_yoy_TOTAL", "msrs", "percent_yoy", "state", "Texas", 14)
     write_series("indeed_postings_total", "indeed", "postings", "state", "California", 14)
-    write_series("card_spending_index", "fred_card", "index", "national", "United States", 14)
     write_series("fred_retail_sales_national", "fred_targets", "millions_usd", "national", "United States", 14)
     write_series("viirs_avg_radiance", "viirs", "nW/cm2/sr", "metro", "Fresno, CA", 14)
     add_models()
     dest = tmp_path / "out" / "demo.db"
     counts = export_demo.export_demo(dest=dest)
     exported = db.read_signals(db_path=dest)
-    assert set(exported["source"]) == {"msrs", "fred_targets"}                  # no Indeed, card spending or metro rows
+    assert set(exported["source"]) == {"msrs", "fred_targets"}                  # no Indeed or metro rows
     assert set(exported["geo_name"]) == {"California", "United States"}
     assert counts == {"signals": 28, "models": 2, "forecasts": 2}
     assert set(db.read_models(db_path=dest)["model_id"]) == {"CA_retail_sales_naive_locf", "CA_retail_sales_ridge"}
@@ -181,7 +180,7 @@ def demo_path():
 def test_demo_database_holds_only_allowed_public_data(demo_path):
     signals = db.read_signals(db_path=demo_path)
     assert not signals.empty
-    assert set(signals["source"]) <= set(config.DEMO_EXPORT_SOURCES)       # never Indeed or card spending
+    assert set(signals["source"]) <= set(config.DEMO_EXPORT_SOURCES)       # never Indeed
     assert set(signals["grain"]) == {"monthly"} and set(signals["geo_level"]) <= {"state", "national"}
     assert db.read_scrapes(db_path=demo_path).empty                        # no scrape log, no error messages
     assert (config.DEMO_DB_PATH.stat().st_size) < 2_000_000                # small enough to commit

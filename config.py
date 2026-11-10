@@ -365,15 +365,6 @@ def get_state_info(state: str | None = None) -> StateInfo:
     )
 
 
-def list_states() -> list[str]:
-    """Return the names of all states available in the lookup table.
-
-    Returns:
-        A list of full state names, in alphabetical order.
-    """
-    return sorted(_STATE_TABLE)
-
-
 # ---------------------------------------------------------------------------
 # 4. SETTINGS
 # ---------------------------------------------------------------------------
@@ -394,31 +385,27 @@ STALENESS_HOURS = 48
 SOURCE_MSRS = "msrs"
 SOURCE_INDEED = "indeed"
 SOURCE_VIIRS = "viirs"
-SOURCE_FRED_CARD = "fred_card"
 SOURCE_FRED_TARGETS = "fred_targets"
 ALL_SOURCES = (
     SOURCE_MSRS,
     SOURCE_INDEED,
     SOURCE_VIIRS,
-    SOURCE_FRED_CARD,
     SOURCE_FRED_TARGETS,
 )
 
 # Rolling window used for each signal's z-score (number of periods).
 # Spec: "rolling 12-month baseline"; weekly series use 52 weeks (~12 months).
-# Quarterly series (none yet) use 4 quarters = 12 months.
-ZSCORE_WINDOW = {"monthly": 12, "weekly": 52, "quarterly": 4}
+ZSCORE_WINDOW = {"monthly": 12, "weekly": 52}
 # Fewest OBSERVED periods the baseline window must contain for a z-score to be
 # computed. One missing period is tolerated (monthly: 11 of 12, weekly: 51 of
 # 52); two or more leave the z-score empty. Nothing is imputed or filled: the
 # baseline mean and standard deviation use only the observed periods. Reason:
 # the BLS published no unemployment release for October 2025 (federal
 # shutdown), and under a strict "every baseline month present" rule that single
-# hole emptied every z-score for the following 12 months. Quarterly keeps its
-# full 4 (a missing quarter is 25% of the baseline; no quarterly source exists).
+# hole emptied every z-score for the following 12 months.
 # The window must also be entirely inside the series' history, so a series
 # still needs a full window of months before its first z-score.
-BASELINE_MIN_PERIODS = {"monthly": 11, "weekly": 51, "quarterly": 4}
+BASELINE_MIN_PERIODS = {"monthly": 11, "weekly": 51}
 
 # --- Census MSRS -----------------------------------------------------------
 MSRS_BASE_URL = "https://www.census.gov/retail/mrts/www/statedata"
@@ -470,11 +457,6 @@ FRED_TARGET_SERIES = {
     "unemployment_rate_national": ("UNRATE", "national", "percent"),
     "retail_sales_national": ("RSAFS", "national", "millions_usd"),
 }
-# SF Fed card spending: there is NO verified FRED series ID for this (see
-# blockers.md), so the ID is not guessed. Set CARD_SPENDING_SERIES_ID once a
-# real series is confirmed.
-CARD_SPENDING_SERIES_ID = os.environ.get("CARD_SPENDING_SERIES_ID") or None
-CARD_SPENDING_UNIT = "index"
 
 # --- Phase two: cleaning and alignment ------------------------------------
 # Plausible range per unit: (lowest, highest); None = no limit on that side.
@@ -491,7 +473,7 @@ PLAUSIBLE_RANGE = {
 }
 # Sources whose values are official published numbers with nothing imputed on
 # our side; their quality_score is 1.0 when the source gives none.
-OFFICIAL_SOURCES = (SOURCE_FRED_TARGETS, SOURCE_FRED_CARD)
+OFFICIAL_SOURCES = (SOURCE_FRED_TARGETS,)
 # Months in which Indeed was scraped on less than this share of days are kept
 # (with their low quality_score) but excluded from z-score baselines, so a
 # 9-day count is never compared with a full-month count.
@@ -525,8 +507,6 @@ RELEASE_LAG_DAYS = {
     "fred_unemployment_rate_national": 14,
     # Census advance retail sales: about the 15th of the next month.
     "fred_retail_sales_national": 21,
-    # Card spending: ASSUMED; only matters if a series is configured.
-    SOURCE_FRED_CARD: 45,
 }
 
 # Which series become features: monthly rows at these geography levels only
@@ -629,7 +609,7 @@ GBM_GRID = {"n_estimators": [50, 100], "max_depth": [1, 2], "learning_rate": [0.
 DEMO_DB_PATH = DATA_DIR / "demo" / "altsignal_demo.db"
 # Only sources whose data is public and may be redistributed go into the demo
 # snapshot. Indeed is scraped (non-commercial use only, terms of service unclear)
-# and is never exported; card spending is third-party data with its own terms.
+# and is never exported.
 DEMO_EXPORT_SOURCES = (SOURCE_MSRS, SOURCE_VIIRS, SOURCE_FRED_TARGETS)
 # A divergence needs both signals at least this many standard deviations from
 # their own baseline (z-score), or a 3-month z-score change of at least this much.

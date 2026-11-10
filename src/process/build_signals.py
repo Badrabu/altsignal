@@ -6,8 +6,7 @@ Run it after the ingestion pipelines:
 
 For the active ``STATE`` (and the national series) it:
 
-1. Reads what ingestion stored (MSRS, VIIRS, FRED targets, optional card
-   spending) and checks that no series mixes units.
+1. Reads what ingestion stored (MSRS, VIIRS, FRED targets) and checks that no series mixes units.
 2. Cleans it (``clean.py``): drops rows with no value, misaligned months,
    implausible values and VIIRS months with more than 20% low coverage. Dropped
    rows are also removed from the table. Nothing is imputed.
@@ -19,8 +18,7 @@ For the active ``STATE`` (and the national series) it:
 It is IDEMPOTENT: the table is unique on (signal_id, geo_level, geo_name,
 period_start, grain), so running it again updates rows in place and never
 creates duplicates. Sources that have no data yet (for example VIIRS before
-Earth Engine is set up) are reported and skipped; the optional card spending
-source is skipped quietly.
+Earth Engine is set up) are reported and skipped.
 
 ``quality_score`` is a number from 0 to 1 whose meaning depends on the source
 (see the README). Scores from different sources are not comparable.
@@ -48,10 +46,7 @@ NATIVE_MONTHLY_SOURCES = (
     config.SOURCE_MSRS,
     config.SOURCE_VIIRS,
     config.SOURCE_FRED_TARGETS,
-    config.SOURCE_FRED_CARD,
 )
-# Sources that may legitimately be absent.
-OPTIONAL_SOURCES = (config.SOURCE_FRED_CARD,)
 
 
 @dataclass
@@ -60,8 +55,7 @@ class SourceReport:
 
     Attributes:
         source: Source name.
-        status: "built", "no data" (nothing ingested yet), "skipped" (optional
-            source not configured) or "error".
+        status: "built", "no data" (nothing ingested yet) or "error".
         rows_read: Rows read from the table (or built, for Indeed).
         rows_dropped: Dropped rows per reason.
         rows_written: Rows written back.
@@ -161,11 +155,8 @@ def build_native_source(source: str, info: config.StateInfo) -> SourceReport:
     rows = rows[rows["grain"] == "monthly"]
     report.rows_read = len(rows)
     if rows.empty:
-        if source in OPTIONAL_SOURCES:
-            report.status, report.message = "skipped", "optional source, nothing ingested"
-        else:
-            report.status = "no data"
-            report.message = f"nothing ingested yet; run `python -m src.ingest.{_ingest_module(source)}`"
+        report.status = "no data"
+        report.message = f"nothing ingested yet; run `python -m src.ingest.{_ingest_module(source)}`"
         return report
     try:
         finalise(rows, report)

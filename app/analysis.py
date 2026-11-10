@@ -13,7 +13,6 @@ import pandas as pd
 import config
 
 RISING, FALLING, FLAT, UNKNOWN = "rising", "falling", "flat", "not enough data"
-TREND_SYMBOLS = {RISING: "up", FALLING: "down", FLAT: "flat", UNKNOWN: "n/a"}
 NAIVE_KIND = "naive"
 
 

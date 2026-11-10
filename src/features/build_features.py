@@ -31,7 +31,6 @@ import logging
 import sys
 from datetime import datetime, timezone
 
-import pandas as pd
 
 import config
 from src.features import engineer, split as splitting

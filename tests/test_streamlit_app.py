@@ -1,12 +1,10 @@
 """Smoke tests for the Streamlit app using Streamlit's AppTest (no browser, no network)."""
 
-import pandas as pd
 import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 import config
-from src import db
 from tests.helpers import write_series
 
 APP = str(config.ROOT_DIR / "app" / "streamlit_app.py")
@@ -56,7 +54,7 @@ def test_active_state_comes_from_config(monkeypatch):
 def test_blocked_sources_show_no_data_yet_not_fake_data():
     at = run_app()
     page = texts(at)
-    for needle in ("No Indeed data yet", "No VIIRS data yet", "No card spending data yet"):
+    for needle in ("No Indeed data yet", "No VIIRS data yet"):
         assert needle in page
     assert "No FRED data yet" not in page                               # the demo holds the real FRED official series
     assert "Do not build anything commercial on scraped Indeed data" in page   # disclaimer is always visible

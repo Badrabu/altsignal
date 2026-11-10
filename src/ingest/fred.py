@@ -1,16 +1,9 @@
 """Ingest series from FRED (Federal Reserve Economic Data) with ``fredapi``.
 
-Two separate sources, each with its own row in the ``scrapes`` table:
-
-    fred_targets  The official numbers we will later try to nowcast:
-                  state unemployment rate (BLS, e.g. ``CAUR``), national
-                  unemployment rate (``UNRATE``) as a fallback, and national
-                  retail sales (Census advance report, ``RSAFS``).
-    fred_card     Card spending index. NATIONAL ONLY, used only as a secondary
-                  cross-check, never as the state-level consumption input.
-                  The series ID is configured in ``config.CARD_SPENDING_SERIES_ID``
-                  (see blockers.md - no verified SF Fed series ID exists on
-                  FRED, so none is guessed).
+Source ``fred_targets`` (one row per run in the ``scrapes`` table): the
+official numbers we try to nowcast: state unemployment rate (BLS, e.g.
+``CAUR``), national unemployment rate (``UNRATE``) as a fallback, and national
+retail sales (Census advance report, ``RSAFS``).
 
 You need a free FRED API key (https://fred.stlouisfed.org/docs/api/api_key.html)
 in the ``FRED_API_KEY`` environment variable. Never commit the key.
@@ -170,49 +163,14 @@ def ingest_targets(state: str | None = None, fred=None) -> ScrapeResult:
     return run_logged(config.SOURCE_FRED_TARGETS, job)
 
 
-def ingest_card_spending(fred=None, series_id: str | None = None) -> ScrapeResult:
-    """Fetch the national card spending index and log the scrape.
-
-    Args:
-        fred: Optional FRED client (used by tests).
-        series_id: FRED series ID. Defaults to ``config.CARD_SPENDING_SERIES_ID``.
-
-    Returns:
-        The ``ScrapeResult`` (also written to the ``scrapes`` table).
-    """
-
-    def job(result: ScrapeResult) -> None:
-        sid = series_id or config.CARD_SPENDING_SERIES_ID
-        if not sid:
-            raise IngestError(
-                "No card spending series configured. There is no verified SF Fed card "
-                "spending series on FRED (see blockers.md). Set CARD_SPENDING_SERIES_ID "
-                "(environment variable or config.py) to a confirmed FRED series ID."
-            )
-        client = fred or get_fred_client()
-        try:
-            series = fetch_series(client, sid)
-        except ValueError as exc:
-            raise IngestError(f"FRED series {sid!r} not found: {exc}") from exc
-        rows = series_to_rows(series, "card_spending_index", "national", "United States",
-                              config.CARD_SPENDING_UNIT, config.SOURCE_FRED_CARD)
-        if rows.empty:
-            raise IngestError(f"FRED series {sid!r} returned no observations.")
-        result.rows_returned = db.write_signals(rows)
-
-    return run_logged(config.SOURCE_FRED_CARD, job)
-
-
 def main() -> int:
     """Command-line entry point: ``python -m src.ingest.fred``.
 
-    Runs both FRED sources (targets, then card spending).
-
     Returns:
-        Process exit code (0 only if both succeeded).
+        Process exit code (0 if the run succeeded).
     """
     setup_logging()
-    return exit_code(ingest_targets(), ingest_card_spending())
+    return exit_code(ingest_targets())
 
 
 if __name__ == "__main__":

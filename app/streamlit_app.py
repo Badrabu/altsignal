@@ -303,7 +303,7 @@ def render_nowcast_tab(info: config.StateInfo, signals: pd.DataFrame, choice: dl
         st.markdown("\n".join(f"- {n}" for n in notes))
 
     st.markdown("#### Nowcast versus official release")
-    official, official_id = dl.official_series(target, signals)
+    official, _ = dl.official_series(target, signals)
     if official.empty:
         st.info("**No data yet** for the official series, so no comparison line can be drawn.")
     shown_models = st.multiselect("Models to show", list(short.values()), default=list(short.values()), key="shown_models")

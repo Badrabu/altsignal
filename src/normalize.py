@@ -6,8 +6,8 @@ a z-score against that signal's OWN trailing baseline:
 
     z_t = (x_t - mean of previous N periods) / std of previous N periods
 
-where N is 12 for monthly series (12 months), 52 for weekly series and 4 for
-quarterly series (all about 12 months).
+where N is 12 for monthly series (12 months) and 52 for weekly series
+(both about 12 months).
 
 Rules (from the project spec):
     * The baseline uses only PAST periods (not the current one), so a z-score
@@ -30,8 +30,8 @@ import pandas as pd
 import config
 
 # pandas frequency codes for each grain. Monthly periods start on the 1st;
-# weekly periods start on Monday; quarterly on the 1st of Jan/Apr/Jul/Oct.
-_FREQ = {"monthly": "MS", "weekly": "W-MON", "quarterly": "QS"}
+# weekly periods start on Monday.
+_FREQ = {"monthly": "MS", "weekly": "W-MON"}
 
 
 def rolling_zscore(values: pd.Series, grain: str) -> pd.Series:
@@ -40,7 +40,7 @@ def rolling_zscore(values: pd.Series, grain: str) -> pd.Series:
     Args:
         values: A series indexed by period start date (``DatetimeIndex``),
             holding raw values. Missing periods may simply be absent.
-        grain: "monthly", "weekly" or "quarterly". Sets the baseline length.
+        grain: "monthly" or "weekly". Sets the baseline length.
 
     Returns:
         A series with the same index as ``values``. Entries are NaN where

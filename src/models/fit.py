@@ -28,7 +28,7 @@ missing feature gets NO prediction (NaN), never a filled-in one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
@@ -73,7 +73,6 @@ class FittedModel:
     cv_predictions: pd.Series
     n_train_rows: int
     n_columns_dropped: int
-    cv_grid: list[dict] = field(default_factory=list)
 
     def predict(self, table: pd.DataFrame) -> pd.Series:
         """Predict rows of a feature table (train, test or unlabeled).
@@ -300,5 +299,4 @@ def fit_model(name: str, train: sp.TrainSet, n_columns_dropped: int = 0) -> Fitt
     return FittedModel(
         name=name, columns=columns, standardizer=scaler, estimator=model, params=best["params"],
         cv_rmse=best["cv_rmse"], cv_predictions=best["oof"], n_train_rows=len(train.frame),
-        n_columns_dropped=n_columns_dropped,
-        cv_grid=[{"params": r["params"], "cv_rmse": r["cv_rmse"]} for r in results])
+        n_columns_dropped=n_columns_dropped)
